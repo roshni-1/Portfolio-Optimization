@@ -1,4 +1,7 @@
 # Portfolio-Optimization
+
+
+## Stock_portfolio_optimization.py
 - **Fetches User Input:** For stock symbols, quantities, and purchase prices.
 - **Collects Data:** Gathers historical stock data and recent news.
 - **Calculates Risk Metrics:** Computes volatility, max drawdown, and Sharpe ratio.

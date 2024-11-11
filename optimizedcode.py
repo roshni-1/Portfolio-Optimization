@@ -44,7 +44,7 @@ def fetch_news(stock_symbols):
         news_data[symbol] = headlines
     return news_data
 
-# Clean and preprocess news headlines
+# Clean & preprocess news headlines
 def clean_headlines(headlines):
     cleaned_headlines = []
     for headline in headlines:

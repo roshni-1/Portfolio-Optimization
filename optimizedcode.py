@@ -2,248 +2,212 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import yfinance as yf
-from GoogleNews import GoogleNews
-from newspaper import Article
-import requests
-from bs4 import BeautifulSoup
-import nltk
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-from nltk.corpus import stopwords
-from scipy.optimize import minimize
-from datetime import datetime
 from prophet import Prophet
-from statsmodels.tsa.arima.model import ARIMA
+from datetime import datetime
 import warnings
+import seaborn as sns
+from textblob import TextBlob
+import feedparser
+import random
+import math
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
-# Initialize sentiment analyzer
-sia = SentimentIntensityAnalyzer()
-stop_words = set(stopwords.words('english'))
-
-# Function to fetch historical stock data
-def get_stock_data(stock_symbols):
+# Function to fetch stock data
+def get_stock_data(symbols, period="5y"):
     stock_data = {}
-    for symbol in stock_symbols:
+    for symbol in symbols:
         stock = yf.Ticker(symbol)
-        data = stock.history(period="max")  # Fetch all available historical data
-        data.index = data.index.tz_localize(None) 
+        data = stock.history(period=period)
+        data.index = data.index.tz_localize(None)  # Remove timezone
+        stock_data[symbol] = data
     return stock_data
 
-# Fetch news headlines
-def fetch_news(stock_symbols):
-    news_data = {}
-    headers = {"User-Agent": "Mozilla/5.0"}
-    for symbol in stock_symbols:
-        query = f"{symbol} stock news"
-        url = f"https://www.google.com/search?q={query}&tbm=nws"
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        headlines = [item.get_text() for item in soup.find_all('div', class_='BNeawe vvjwJb AP7Wnd')]
-        news_data[symbol] = headlines
-    return news_data
+# Function to fetch index data (e.g., NIFTY 50 or SENSEX)
+def get_index_data(index_symbol="^NSEI", period="5y"):
+    index = yf.Ticker(index_symbol)
+    index_data = index.history(period=period)
+    index_data.index = index_data.index.tz_localize(None)
+    return index_data
 
-# Clean & preprocess news headlines
-def clean_headlines(headlines):
-    cleaned_headlines = []
-    for headline in headlines:
-        tokens = headline.lower().split()
-        tokens = [word for word in tokens if word.isalpha() and word not in stop_words]
-        cleaned_headlines.append(" ".join(tokens))
-    return cleaned_headlines
-
-# Perform sentiment analysis on news headlines
-def analyze_sentiment(news_data):
-    sentiment_results = {}
-    for symbol, headlines in news_data.items():
-        cleaned_headlines = clean_headlines(headlines)
-        sentiment_scores = [sia.polarity_scores(headline)['compound'] for headline in cleaned_headlines]
-        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
-        sentiment_results[symbol] = avg_sentiment
-    return sentiment_results
-
-# Function to fetch current stock prices
-def get_current_price(stock_symbols):
-    current_prices = {}
-    for symbol in stock_symbols:
-        stock = yf.Ticker(symbol)
-        data = stock.history(period="1d")
-        if not data.empty:
-            current_prices[symbol] = data['Close'].iloc[-1]
-        else:
-            current_prices[symbol] = None  # Handle cases where no price data is found
-    return current_prices
-
-# Function to calculate profit and loss
-def calculate_profit_loss(stock_symbols, quantities, invested_amounts):
-    current_prices = get_current_price(stock_symbols)
-    profit_loss_summary = {}
-
-    for symbol in stock_symbols:
-        current_price = current_prices[symbol]
-        if current_price is None:
-            print(f"Warning: No data available for {symbol}.")
-            continue
-        
-        total_current_value = current_price * quantities[symbol]
-        total_investment = invested_amounts[symbol]
-        profit_or_loss = total_current_value - total_investment
-        advice = ""
-
-        # Determine advice based on profit or loss
-        if profit_or_loss > 0:
-            advice = (
-                "Hold/Sell - Since the stock has appreciated, consider holding if you expect further gains, "
-                "or sell to lock in profits. Evaluate based on market trends and financial goals."
-            )
-        elif profit_or_loss < 0:
-            advice = (
-                "Buy more - The stock has depreciated, so buying more can help you lower your average cost per share, "
-                "especially if you believe the stock will recover and appreciate in the future."
-            )
-        else:
-            advice = (
-                "Hold - The stock is at break-even. Monitor its performance and market conditions closely to decide "
-                "if it aligns with your financial strategy."
-            )
-
-        profit_loss_summary[symbol] = {
-            "Total Current Value": total_current_value,
-            "Total Investment": total_investment,
-            "Profit or Loss": profit_or_loss,
-            "Advice": advice
-        }
-
-    return profit_loss_summary
-
-# Calculate risk metrics for each stock
-def calculate_risk_metrics(stock_data):
-    risk_metrics = {}
+# Function to compare stock performance to an index
+def compare_with_index(stock_data, index_data):
+    comparison = {}
     for symbol, data in stock_data.items():
-        data['Daily Return'] = data['Close'].pct_change()
-        volatility = data['Daily Return'].std() * np.sqrt(252)
-        max_drawdown = ((data['Close'] - data['Close'].cummax()) / data['Close'].cummax()).min()
-        sharpe_ratio = data['Daily Return'].mean() / data['Daily Return'].std() * np.sqrt(252)
-        risk_metrics[symbol] = {'Volatility': volatility, 'Max Drawdown': max_drawdown, 'Sharpe Ratio': sharpe_ratio}
-    return risk_metrics
+        stock_return = data['Close'].pct_change().mean() * 252
+        index_return = index_data['Close'].pct_change().mean() * 252
+        alpha = stock_return - index_return
+        comparison[symbol] = {'Stock Return': stock_return, 'Index Return': index_return, 'Alpha': alpha}
+    return comparison
 
-# Prophet forecasting function
-def prophet_forecast(df, periods=30):
-    # Prepare data for Prophet
-    df = df[['Close']].reset_index()
-    df.columns = ['ds', 'y']
-    df['ds'] = pd.to_datetime(df['ds']).dt.tz_localize(None)  
-    model = Prophet(daily_seasonality=True, yearly_seasonality=True)  
-    model.fit(df)
-    
-    # Generate future predictions
-    future = model.make_future_dataframe(periods=periods)
-    forecast = model.predict(future)
-    return forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
-
-# Optimize portfolio allocation
-def optimize_portfolio(stock_data, quantities, purchase_prices):
-    returns = pd.DataFrame({symbol: stock_data[symbol]['Close'].pct_change() for symbol in stock_data})
+# Portfolio Allocation (using Risk and Return)
+def portfolio_allocation(stock_data, quantities, invested_amounts):
+    returns = pd.DataFrame({symbol: data['Close'].pct_change() for symbol, data in stock_data.items()}).dropna()
     cov_matrix = returns.cov()
-    init_guess = [1. / len(stock_data)] * len(stock_data)
-    cons = ({'type': 'eq', 'fun': lambda weights: np.sum(weights) - 1})
-    bounds = tuple((0, 1) for _ in range(len(stock_data)))
-    result = minimize(lambda weights: np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))), init_guess, method='SLSQP', bounds=bounds, constraints=cons)
-    optimal_weights = result.x
-    portfolio_value = sum(optimal_weights[i] * purchase_prices[symbol] * quantities[symbol] for i, symbol in enumerate(stock_data))
-    return optimal_weights, portfolio_value
+    avg_returns = returns.mean()
+    weights = np.array([invested_amounts[symbol] for symbol in stock_data])
+    weights /= weights.sum()
+    portfolio_return = np.dot(weights, avg_returns) * 252
+    portfolio_risk = np.sqrt(np.dot(weights.T, np.dot(cov_matrix * 252, weights)))
+    sharpe_ratio = portfolio_return / portfolio_risk
+    return portfolio_return, portfolio_risk, sharpe_ratio
 
-def generate_investment_advice(optimal_weights, sentiment_results, risk_metrics, forecast_results, quantities, purchase_prices):
-    advice = []
-    for i, symbol in enumerate(sentiment_results.keys()):
-        weight = optimal_weights[i]
-        sentiment = sentiment_results[symbol]
-        risk = risk_metrics[symbol]
-        
-        # Sentiment-based recommendation
-        sentiment_advice = ""
-        if sentiment > 0.1:
-            sentiment_advice = "Buy: The sentiment is positive, suggesting a potential for price appreciation."
-        elif sentiment < -0.1:
-            sentiment_advice = "Sell: The sentiment is negative, indicating possible price decline."
-        else:
-            sentiment_advice = "Hold: Sentiment is neutral, indicating no strong movement expected."
-        
-        # Extract forecasted price range from Prophet's forecast results
-        forecast = forecast_results[symbol]
-        
-        # Check if forecast is a DataFrame and contains 'yhat_lower' and 'yhat_upper'
-        if isinstance(forecast, pd.DataFrame):
-            forecasted_price_range = (forecast['yhat_lower'].iloc[-1], forecast['yhat_upper'].iloc[-1])
-            forecast_advice = f"Forecasted price range: {forecasted_price_range[0]:.2f} to {forecasted_price_range[1]:.2f} (within 30 days)"
-        else:
-            forecast_advice = "Forecast data not available."
-        
-        # Risk-based advice
-        risk_advice = ""
-        if risk['Volatility'] > 0.5:
-            risk_advice = "High risk: The stock has high volatility, consider holding or selling if you're risk-averse."
-        elif risk['Sharpe Ratio'] < 1:
-            risk_advice = "Low Sharpe ratio: The stock may not provide good risk-adjusted returns, hold with caution."
-        else:
-            risk_advice = "Good risk-adjusted return: The stock has a good risk profile, making it safer to hold or buy."
-        
-        # Actionable advice: Buy/Sell/Hold and how many shares
-        action_advice = ""
-        if sentiment > 0.1:
-            action_advice = f"Buy: You should consider purchasing {int(weight * 100)} more shares."
-        elif sentiment < -0.1:
-            action_advice = f"Sell: Consider selling some of your shares to lock in profits or limit losses."
+# Profit/Loss Calculation
+def calculate_profit_loss(stock_data, quantities, invested_amounts):
+    profit_loss = {}
+    for symbol, data in stock_data.items():
+        current_price = data['Close'].iloc[-1]
+        invested_value = invested_amounts[symbol]
+        current_value = current_price * quantities[symbol]
+        profit_loss[symbol] = {
+            'Current Price': current_price,
+            'Invested Value': invested_value,
+            'Current Value': current_value,
+            'Profit/Loss': current_value - invested_value,
+            'Profit/Loss %': ((current_value - invested_value) / invested_value) * 100
+        }
+    return profit_loss
 
-        advice.append(f"{symbol}: {sentiment_advice} {forecast_advice} {risk_advice} {action_advice}")
+# Sentiment Analysis using Google RSS Feed
+def analyze_sentiment(stock_symbol):
+    rss_url = f"https://news.google.com/rss/search?q={stock_symbol}&hl=en-IN&gl=IN&ceid=IN%3Aen"
+    try:
+        news_data = feedparser.parse(rss_url)
+        
+        if len(news_data.entries) == 0:
+            return "No Articles Found"
+        
+        sentiment_score = 0
+        for article in news_data.entries:
+            text = (article.title or '') + ' ' + (article.summary or '')
+            sentiment_score += TextBlob(text).sentiment.polarity
+        
+        avg_sentiment = sentiment_score / len(news_data.entries) if len(news_data.entries) > 0 else 0
+        
+        if avg_sentiment > 0:
+            return "Positive Sentiment"
+        elif avg_sentiment < 0:
+            return "Negative Sentiment"
+        else:
+            return "Neutral Sentiment"
     
-    return advice
+    except Exception as e:
+        print(f"Error occurred while fetching or processing news for {stock_symbol}: {e}")
+        return "Error Fetching Sentiment"
 
+# Forecast stock prices using Prophet
+def forecast_stock_prices(stock_symbol):
+    data = get_stock_data_for_forecast(stock_symbol)
+    model = Prophet()
+    model.fit(data)
+    future = model.make_future_dataframe(periods=5)  # Forecast for the next 5 days
+    forecast = model.predict(future)
+    return forecast
 
+# Forecast stock data for a symbol (for Prophet)
+def get_stock_data_for_forecast(stock_symbol):
+    stock = yf.Ticker(stock_symbol)
+    data = stock.history(period="1y")
+    data = data[['Close']].reset_index()
+    data.rename(columns={'Date': 'ds', 'Close': 'y'}, inplace=True)
+    data['ds'] = data['ds'].dt.tz_localize(None)  # Remove timezone if present
+    return data
 
-# Main function to execute all steps
+# Monte Carlo Simulation for Stock Price Prediction
+def monte_carlo_simulation(stock_data, symbol, num_simulations=1000, days=5):
+    last_price = stock_data[symbol]['Close'].iloc[-1]
+    returns = stock_data[symbol]['Close'].pct_change().dropna()
+    mean_return = returns.mean()
+    std_return = returns.std()
+    
+    simulations = np.zeros(num_simulations)
+    for i in range(num_simulations):
+        random_returns = np.random.normal(mean_return, std_return, days)
+        price_path = last_price * np.cumprod(1 + random_returns)
+        simulations[i] = price_path[-1]
+    
+    plt.figure(figsize=(10, 6))
+    plt.hist(simulations, bins=50, alpha=0.7, color='blue')
+    plt.axvline(x=np.percentile(simulations, 5), color='red', linestyle='--', label='5th Percentile')
+    plt.axvline(x=np.percentile(simulations, 95), color='red', linestyle='--', label='95th Percentile')
+    plt.title(f"Monte Carlo Simulation for {symbol} Price Prediction")
+    plt.xlabel("Price")
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.show()
+    
+    # Provide textual advice based on simulation
+    mean_simulation = np.mean(simulations)
+    print(f"Monte Carlo Simulation for {symbol}:")
+    print(f"The simulated price of {symbol} in 5 days has an expected mean value of {mean_simulation:.2f}.")
+    print(f"Based on the simulation, there's a 90% chance that the price will be between {np.percentile(simulations, 5):.2f} and {np.percentile(simulations, 95):.2f}.")
+    print("Investment advice: If the price falls within this range, it may indicate a stable short-term price movement.")
+
+# Plot forecasts for each stock symbol
+def plot_stock_forecasts(stock_symbol, forecast):
+    plt.figure(figsize=(10, 6))
+    plt.plot(forecast['ds'], forecast['yhat'], label='Forecasted Price', color='blue')
+    plt.fill_between(forecast['ds'], forecast['yhat_lower'], forecast['yhat_upper'], color='gray', alpha=0.3)
+    plt.title(f"5-Day Forecast for {stock_symbol}")
+    plt.xlabel("Date")
+    plt.ylabel("Price")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+# Investment Advice based on Forecast
+def investment_advice(forecast):
+    if forecast['yhat_upper'].iloc[-1] > forecast['yhat_lower'].iloc[-1]:
+        return "The price is expected to increase in the short term. Consider holding or buying more."
+    else:
+        return "The price is expected to decrease in the short term. Consider reducing your exposure or selling."
+
+# Main function to execute all features
 def main():
-    input_symbols = input("Enter stock symbols with suffix (e.g., TATASTEEL.NS, ADANIPORTS.NS): ")
+    print("Welcome to the Smart Investment Advisor!")
+    
+    input_symbols = input("Enter stock symbols with suffix (e.g., TATASTEEL.NS, RPOWER.BS): ")
     stock_symbols = [symbol.strip() for symbol in input_symbols.split(",")]
+    
     quantities = {}
     invested_amounts = {}
-
     for symbol in stock_symbols:
         quantities[symbol] = int(input(f"Enter quantity for {symbol}: "))
         invested_amounts[symbol] = float(input(f"Enter total amount invested in {symbol}: "))
 
-    # Fetch stock data and perform analysis
     stock_data = get_stock_data(stock_symbols)
-    news_data = fetch_news(stock_symbols)
-    sentiment_results = analyze_sentiment(news_data)
-    risk_metrics = calculate_risk_metrics(stock_data)
-    current_prices = get_current_price(stock_symbols)
-    profit_loss_summary = calculate_profit_loss(stock_symbols, quantities, invested_amounts)
+    index_data = get_index_data()
 
-    # Forecast prices using Prophet
-    forecast_results = {}
+    index_comparison = compare_with_index(stock_data, index_data)
+    print("\nStock Performance Compared to Market Index:")
+    for symbol, comparison in index_comparison.items():
+        print(f"{symbol}: Stock Return = {comparison['Stock Return']:.2%}, Index Return = {comparison['Index Return']:.2%}, Alpha = {comparison['Alpha']:.2%}")
+
+    portfolio_return, portfolio_risk, sharpe_ratio = portfolio_allocation(stock_data, quantities, invested_amounts)
+    print(f"\nPortfolio Return: {portfolio_return:.2%}, Portfolio Risk: {portfolio_risk:.2%}, Sharpe Ratio: {sharpe_ratio:.2f}")
+
+    profit_loss = calculate_profit_loss(stock_data, quantities, invested_amounts)
+    print("\nProfit/Loss Calculations:")
+    for symbol, data in profit_loss.items():
+        print(f"{symbol}: Current Price = {data['Current Price']}, Invested Value = {data['Invested Value']}, "
+              f"Current Value = {data['Current Value']}, Profit/Loss = {data['Profit/Loss']:.2f} ({data['Profit/Loss %']:.2f}%)")
+
+    print("\nSentiment Analysis:")
     for symbol in stock_symbols:
-        forecast_results[symbol] = prophet_forecast(stock_data[symbol])
+        sentiment = analyze_sentiment(symbol)
+        print(f"Sentiment for {symbol}: {sentiment}")
 
-    # Optimize portfolio allocation
-    optimal_weights, portfolio_value = optimize_portfolio(stock_data, quantities, invested_amounts)
+    print("\n5-Day Price Forecasts:")
+    for symbol in stock_symbols:
+        forecast = forecast_stock_prices(symbol)
+        plot_stock_forecasts(symbol, forecast)
+        print(f"Forecast Summary for {symbol}:")
+        print(investment_advice(forecast))
 
-    # Generate detailed investment advice
-    investment_advice = generate_investment_advice(optimal_weights, sentiment_results, risk_metrics, forecast_results, quantities, invested_amounts)
-
-    # Display all results
-    print("\nProfit and Loss Summary:")
-    for symbol, summary in profit_loss_summary.items():
-        print(f"\nStock: {symbol}")
-        print(f"  Total Current Value: {summary['Total Current Value']}")
-        print(f"  Total Investment: {summary['Total Investment']}")
-        print(f"  Profit or Loss: {summary['Profit or Loss']}")
-        print(f"  Advice: {summary['Advice']}")
-    
-    print("\nInvestment Advice Summary:")
-    for advice_item in investment_advice:
-        print(advice_item)
+    print("\nMonte Carlo Simulations:")
+    for symbol in stock_symbols:
+        monte_carlo_simulation(stock_data, symbol)
 
 if __name__ == "__main__":
     main()

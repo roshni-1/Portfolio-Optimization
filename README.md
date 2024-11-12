@@ -8,3 +8,4 @@
 - **Performs Optimization:** Finds optimal portfolio weights using mean-variance optimization.
 - **Generates Sentiment Analysis:** Based on recent news headlines.
 - **Provides Investment Advice:** In layman’s terms based on the sentiment analysis, risk metrics, and portfolio optimization results.
+![image](https://github.com/user-attachments/assets/33ed3539-1161-486b-8bd9-5c485b738f37)

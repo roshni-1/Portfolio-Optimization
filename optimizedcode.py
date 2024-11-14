@@ -262,7 +262,7 @@ def generate_report(stock_data, portfolio):
     for symbol, result in monte_carlo_results.items():
         print(f"{symbol}: Predicted 30-day Price Range = ₹{result['5th_percentile']:.2f} to ₹{result['95th_percentile']:.2f} (Mean: ₹{result['mean']:.2f})")
 
-# User Input
+# User Input for stock symbol, quantity, total amount invested
 portfolio = {}
 print("Enter your portfolio details:")
 while True:

@@ -1,172 +1,231 @@
 import yfinance as yf
+from nsepy import get_history
+from datetime import date
+from pypfopt import EfficientFrontier, risk_models, expected_returns
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from prophet import Prophet
-import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-from textblob import TextBlob
-from pypfopt.efficient_frontier import EfficientFrontier
-from pypfopt.expected_returns import mean_historical_return
-from pypfopt.risk_models import CovarianceShrinkage
-from datetime import datetime
+from bs4 import BeautifulSoup
 import requests
+from textblob import TextBlob
+from prophet import Prophet
 import seaborn as sns
+import warnings
+warnings.filterwarnings("ignore")
 
-# Set up for better visualization
-plt.style.use('seaborn-v0_8-darkgrid')
-
-# Function to get stock data from Yahoo Finance
 def get_stock_data(stock_symbols):
     stock_data = {}
     for symbol in stock_symbols:
-        data = yf.download(symbol + ".NS", period="1y")
-        if not data.empty:
-            stock_data[symbol] = data
+        try:
+            stock_data[symbol] = yf.download(symbol, start="2020-01-01", end=pd.to_datetime('today').strftime('%Y-%m-%d'))
+        except Exception as e:
+            print(f"Error fetching data for {symbol}: {e}")
     return stock_data
 
-# Profit and Loss Calculation
-def calculate_profit_loss(stock_data, portfolio):
-    total_invested = 0
-    total_current_value = 0
-    profit_loss_details = []
+# **1. Stop-Loss Calculation**
+def calculate_stop_loss(price, percentage):
+    return price * (1 - percentage / 100)
 
-    for symbol, details in portfolio.items():
-        if symbol in stock_data:
-            last_price = stock_data[symbol]['Close'].iloc[-1]
-            invested = details['total_invested']
-            current_value = last_price * details['quantity']
-            profit_loss = current_value - invested
-            total_invested += invested
-            total_current_value += current_value
-            profit_loss_details.append(
-                {
-                    "symbol": symbol,
-                    "invested": invested,
-                    "current_value": current_value,
-                    "profit_loss": profit_loss,
-                    "percent_change": (profit_loss / invested) * 100
-                }
-            )
+# **2. Sector Allocation**
+def get_sector_data(portfolio):
+    sector_allocation = {}
+    for stock in portfolio:
+        try:
+            symbol = stock['symbol']
+            stock = yf.Ticker(symbol)
+            sector = stock.info.get('sector', 'Unknown')
+            
+            if sector in sector_allocation:
+                sector_allocation[sector] += 1
+            else:
+                sector_allocation[sector] = 1
+        except Exception as e:
+            print(f"Error fetching data for {symbol}: {e}")
+    
+    return sector_allocation
 
-    total_profit_loss = total_current_value - total_invested
-    return total_invested, total_current_value, total_profit_loss, profit_loss_details
+def plot_sector_allocation(sector_allocation):
+    # Plot sector allocation using pie chart
+    sectors = list(sector_allocation.keys())
+    values = list(sector_allocation.values())
 
-# Stop-Loss Calculation (based on user-defined percentage)
-def stop_loss_calculation(stock_data, portfolio, stop_loss_percent=5):
-    stop_loss_details = {}
-    for symbol, details in portfolio.items():
-        last_price = stock_data[symbol]['Close'].iloc[-1]
-        stop_loss_price = last_price * (1 - stop_loss_percent / 100)
-        stop_loss_details[symbol] = {
-            "current_price": last_price,
-            "stop_loss_price": stop_loss_price,
-            "threshold": stop_loss_percent
-        }
-    return stop_loss_details
+    plt.figure(figsize=(8, 8))
+    plt.pie(values, labels=sectors, autopct='%1.1f%%', startangle=140)
+    plt.title('Portfolio Sector Allocation')
+    plt.show()
 
-# Sector Allocation of the Portfolio
-def sector_allocation(stock_symbols):
-    sectors = {}
-    for symbol in stock_symbols:
-        info = yf.Ticker(symbol + ".NS").info
-        sector = info.get('sector', 'Unknown')
-        if sector in sectors:
-            sectors[sector] += 1
-        else:
-            sectors[sector] = 1
-    return sectors
 
-# Portfolio Performance vs Index (NIFTY 50)
-def portfolio_vs_index(stock_data, portfolio, index_symbol="^NSEI"):
-    index_data = yf.download(index_symbol, period="1y")['Close']
+def get_stock_sector(symbol):
+    # Fetch sector from yfinance or a predefined dictionary (for demo purposes)
+    stock_info = yf.Ticker(symbol).info
+    return stock_info.get('sector', 'Unknown')
+
+# **3. Portfolio Performance vs. Index (NIFTY 50)**
+def portfolio_vs_nifty(stock_data, portfolio):
+    # Get NIFTY 50 data using yfinance
+    nifty_data = yf.download("^NSEI", start="2023-01-01", end=pd.to_datetime('today').strftime('%Y-%m-%d'))
+    nifty_returns = nifty_data['Adj Close'].pct_change().cumsum()
+
     portfolio_returns = []
+
+    for stock in portfolio:
+        symbol = stock['symbol']
+        price_history = stock_data[symbol]['Adj Close']
+        stock_returns = price_history.pct_change().cumsum()
+        portfolio_returns.append(stock_returns)
+
+    portfolio_returns = pd.DataFrame(portfolio_returns).T
+    portfolio_returns.columns = [stock['symbol'] for stock in portfolio]
+
+    # Calculate portfolio performance
+    portfolio_performance = portfolio_returns.mean(axis=1)
     
-    for symbol, details in portfolio.items():
-        data = stock_data[symbol]['Close']
-        returns = data.pct_change().fillna(0)
-        weighted_return = returns * (details['quantity'] / sum([p['quantity'] for p in portfolio.values()]))
-        portfolio_returns.append(weighted_return)
-    
-    total_portfolio_returns = pd.concat(portfolio_returns, axis=1).sum(axis=1)
-    total_portfolio_returns.index = pd.to_datetime(total_portfolio_returns.index)
-    index_returns = index_data.pct_change().fillna(0)
-    
-    return total_portfolio_returns, index_returns
-
-# News Sentiment Analysis Using Google News RSS Feed
-def news_sentiment_analysis(stock_symbols):
-    sentiment_scores = {}
-    for symbol in stock_symbols:
-        news_url = f"https://news.google.com/rss/search?q={symbol}"
-        response = requests.get(news_url)
-        news_feed = response.text
-        
-        sentiment_score = 0
-        if news_feed:
-            news_items = news_feed.split("<item>")
-            for item in news_items[1:]:
-                title = item.split("<title>")[1].split("</title>")[0]
-                blob = TextBlob(title)
-                sentiment_score += blob.sentiment.polarity
-        sentiment_scores[symbol] = sentiment_score
-    return sentiment_scores
-
-# Portfolio Optimization Using Sharpe Ratio
-def optimize_portfolio(stock_data, portfolio, risk_free_rate=0.03):
-    prices_df = pd.DataFrame({symbol: data['Close'] for symbol, data in stock_data.items()})
-    mu = mean_historical_return(prices_df)
-    S = CovarianceShrinkage(prices_df).ledoit_wolf()
-    
-    ef = EfficientFrontier(mu, S)
-    weights = ef.max_sharpe(risk_free_rate=risk_free_rate)
-    cleaned_weights = ef.clean_weights()
-    performance = ef.portfolio_performance(verbose=False)
-    
-    return cleaned_weights, performance
-
-# Monte Carlo Simulation for Price Prediction
-def monte_carlo_simulation(data, num_simulations=1000, time_horizon=30):
-    daily_returns = data['Close'].pct_change().dropna()
-    last_price = data['Close'].iloc[-1]
-
-    mean_return = daily_returns.mean()
-    volatility = daily_returns.std()
-
-    simulation_results = np.zeros((time_horizon, num_simulations))
-    for sim in range(num_simulations):
-        prices = [last_price]
-        for day in range(time_horizon):
-            simulated_price = prices[-1] * (1 + np.random.normal(mean_return, volatility))
-            prices.append(simulated_price)
-        simulation_results[:, sim] = prices[1:]
-
-    mean_price = np.mean(simulation_results[-1, :])
-    fifth_percentile = np.percentile(simulation_results[-1, :], 5)
-    ninety_fifth_percentile = np.percentile(simulation_results[-1, :], 95)
-
-    return mean_price, fifth_percentile, ninety_fifth_percentile, simulation_results
-
-# Candlestick Chart using Plotly
-def plot_candlestick(stock_symbol, stock_data):
-    fig = go.Figure(data=[go.Candlestick(
-        x=stock_data.index,
-        open=stock_data['Open'],
-        high=stock_data['High'],
-        low=stock_data['Low'],
-        close=stock_data['Close'],
-        name=stock_symbol
-    )])
-
-    fig.update_layout(
-        title=f'Candlestick Chart for {stock_symbol}',
-        xaxis_title='Date',
-        yaxis_title='Price (INR)',
-        xaxis_rangeslider_visible=False
+    # Plot the portfolio vs NIFTY
+    plt.figure(figsize=(10, 6))
+    plt.plot(nifty_returns, label='NIFTY 50', color='blue')
+    plt.plot(portfolio_performance, label='Portfolio', color='green')
+    plt.title("Portfolio vs NIFTY 50 Performance")
+    plt.xlabel("Date")
+    plt.ylabel("Cumulative Return")
+    plt.legend()
+    plt.show()
+# **4. Current Portfolio Value**
+def current_portfolio_value(portfolio, stock_data):
+    return sum(
+        stock_data[stock['symbol']]['Adj Close'].iloc[-1] * stock['quantity']
+        for stock in portfolio
     )
+
+# **5. Predicted Portfolio Value (Monte Carlo Simulation)**
+def monte_carlo_simulation(stock_data, portfolio, num_simulations=1000, num_days=252):
+    simulations = []
+    
+    for stock in portfolio:
+        symbol = stock['symbol']
+        price_history = stock_data[symbol]['Adj Close']
+        log_returns = np.log(price_history / price_history.shift(1)).dropna()
+
+        mean = log_returns.mean()
+        std_dev = log_returns.std()
+
+        # Monte Carlo Simulation
+        simulated_prices = []
+        for _ in range(num_simulations):
+            price_simulation = [price_history.iloc[-1]]
+            for _ in range(num_days):
+                price_simulation.append(price_simulation[-1] * np.exp(np.random.normal(mean, std_dev)))
+            simulations.append(price_simulation)
+    
+    # Convert simulations to numpy array for better handling
+    simulations = np.array(simulations)
+    
+    # Plotting Monte Carlo Simulation - Histogram
+    plt.figure(figsize=(10, 6))
+    plt.hist(simulations[:, -1], bins=50, edgecolor='k', alpha=0.7)
+    plt.title("Monte Carlo Simulation - Future Stock Price Distribution")
+    plt.xlabel("Stock Price")
+    plt.ylabel("Frequency")
+    plt.show()
+    
+    return simulations
+# **6. Trending Sectors**
+def trending_sectors():
+    url = "https://www.moneycontrol.com/stocks/marketstats/index.php"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+    sectors = soup.find_all('a', class_='statslinks')
+    return [sector.text for sector in sectors[:5]]
+
+# **7. Stock Recommendations**
+def stock_recommendations(portfolio, stock_data):
+    recommendations = []
+    
+    for stock in portfolio:
+        symbol = stock['symbol']
+        sector = get_stock_sector(symbol)
+        performance = stock_data[symbol]['Adj Close'].pct_change().tail(1).iloc[0]  # Last day performance
+
+        # Basic logic for recommendations (for demonstration purposes)
+        if performance > 0.05:
+            recommendation = 'Buy'
+        elif performance < -0.05:
+            recommendation = 'Sell'
+        else:
+            recommendation = 'Hold'
+        
+        recommendations.append({
+            'symbol': symbol,
+            'sector': sector,
+            'performance': performance,
+            'recommendation': recommendation
+        })
+    
+    return recommendations
+
+
+# **8. Investment Advice with Sentiment**
+def sentiment_analysis(symbol):
+    url = f"https://news.google.com/rss/search?q={symbol}+stock+market"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'xml')
+    articles = soup.find_all('item')
+    
+    sentiment_scores = []
+    for article in articles:
+        text = article.title.text + " " + article.description.text
+        analysis = TextBlob(text).sentiment
+        sentiment_scores.append(analysis.polarity)
+    
+    avg_sentiment = np.mean(sentiment_scores)
+    sentiment = "Positive" if avg_sentiment > 0.1 else "Neutral" if avg_sentiment > -0.1 else "Negative"
+    return sentiment
+
+# **9. Profit/Loss Calculation**
+def profit_loss(portfolio, stock_data):
+    results = []
+    for stock in portfolio:
+        current_price = stock_data[stock['symbol']]['Adj Close'].iloc[-1]
+        total_investment = stock['investment']
+        profit_or_loss = (current_price * stock['quantity']) - total_investment
+        results.append({'symbol': stock['symbol'], 'P/L': profit_or_loss})
+    return results
+# **10. Portfolio Optimization**
+def portfolio_optimization(stock_data, portfolio):
+    # If there's only one stock, no optimization needed
+    if len(portfolio) == 1:
+        return {portfolio[0]['symbol']: 1.0}  # Assign 100% weight to the single stock
+
+    prices = pd.DataFrame({stock['symbol']: stock_data[stock['symbol']]['Adj Close'] for stock in portfolio})
+    mean_returns = expected_returns.mean_historical_return(prices)
+    covariance = risk_models.sample_cov(prices)
+    
+    ef = EfficientFrontier(mean_returns, covariance)
+    weights = ef.max_sharpe()
+    cleaned_weights = ef.clean_weights()
+    
+    ef.portfolio_performance(verbose=True)
+    return cleaned_weights
+
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+def plot_candlestick(df):
+    fig = make_subplots(rows=1, cols=1, shared_xaxes=True, vertical_spacing=0.3)
+    fig.add_trace(go.Candlestick(
+        x=df['ds'],
+        open=df['yhat_lower'],
+        high=df['yhat'],
+        low=df['yhat_lower'],
+        close=df['yhat_upper'],
+        name='Stock Price Prediction',
+    ))
+
+    fig.update_layout(title='Stock Price Prediction - Candlestick Chart', xaxis_rangeslider_visible=False)
     fig.show()
 
-# Stock Price Prediction using Prophet
-def predict_stock_price(stock_symbol, stock_data):
+
+# **12. Stock Price Prediction using Prophet**
+def predict_stock_price(symbol, stock_data):
     data = stock_data[['Close']].reset_index()
     data.rename(columns={'Date': 'ds', 'Close': 'y'}, inplace=True)
     data['ds'] = data['ds'].dt.tz_localize(None)
@@ -175,107 +234,156 @@ def predict_stock_price(stock_symbol, stock_data):
     model.fit(data)
     future_dates = model.make_future_dataframe(periods=30)
     forecast = model.predict(future_dates)
+    # Plotting Prophet prediction using Candlestick chart
+    plot_candlestick(forecast)
+# **13. Calculate Technical Indicators**
+def calculate_technical_indicators(stock_data, symbol):
+    # Moving Average Convergence Divergence (MACD)
+    stock_data[symbol]['MACD'] = stock_data[symbol]['Adj Close'].ewm(span=12, adjust=False).mean() - stock_data[symbol]['Adj Close'].ewm(span=26, adjust=False).mean()
+    stock_data[symbol]['Signal'] = stock_data[symbol]['MACD'].ewm(span=9, adjust=False).mean()
 
-    # Plot forecast
-    plt.figure(figsize=(12, 6))
-    plt.plot(data['ds'], data['y'], label="Actual Prices")
-    plt.plot(forecast['ds'], forecast['yhat'], label="Forecasted Prices", color='blue')
-    plt.fill_between(forecast['ds'], forecast['yhat_lower'], forecast['yhat_upper'], color='blue', alpha=0.2)
-    plt.title(f"Price Forecast for {symbol}")
-    plt.legend()
-    plt.show()
+    # Relative Strength Index (RSI)
+    delta = stock_data[symbol]['Adj Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    stock_data[symbol]['RSI'] = 100 - (100 / (1 + rs))
 
-    return forecast
-# Generate the Full Report with Detailed Explanations
+    # Bollinger Bands
+    stock_data[symbol]['Moving_Avg'] = stock_data[symbol]['Adj Close'].rolling(window=20).mean()
+    stock_data[symbol]['Upper_Band'] = stock_data[symbol]['Moving_Avg'] + (2 * stock_data[symbol]['Adj Close'].rolling(window=20).std())
+    stock_data[symbol]['Lower_Band'] = stock_data[symbol]['Moving_Avg'] - (2 * stock_data[symbol]['Adj Close'].rolling(window=20).std())
+
+    return stock_data[symbol][['MACD', 'Signal', 'RSI', 'Upper_Band', 'Lower_Band']].tail()
+
+# **14. News Sentiment Analysis using Google RSS Feed**
+def news_sentiment_analysis(stock_symbols):
+    news_sentiments = {}
+    for symbol in stock_symbols:
+        sentiment = sentiment_analysis(symbol)
+        news_sentiments[symbol] = sentiment
+    return news_sentiments
+
+# **15. Detailed Summary of the User's Portfolio**
+def portfolio_summary(portfolio, stock_data):
+    summary = []
+    total_value = 0
+    for stock in portfolio:
+        current_price = stock_data[stock['symbol']]['Adj Close'].iloc[-1]
+        stock_value = current_price * stock['quantity']
+        total_value += stock_value
+        summary.append({
+            'symbol': stock['symbol'],
+            'quantity': stock['quantity'],
+            'current_price': current_price,
+            'total_value': stock_value,
+            'investment': stock['investment'],
+            'P/L': stock_value - stock['investment']
+        })
+    return summary, total_value
+
+# **16. Portfolio Potential Analysis**
+def portfolio_potential_analysis(portfolio, stock_data):
+    potential_values = []
+    for stock in portfolio:
+        symbol = stock['symbol']
+        future_prices = monte_carlo_simulation(stock_data, portfolio)
+        expected_value = np.mean(future_prices) * stock['quantity']
+        potential_values.append({
+            'symbol': symbol,
+            'expected_value': expected_value
+        })
+    return potential_values
+# **User Input Handling**
+def get_user_input():
+    portfolio = []
+    while True:
+        symbol = input("Enter stock symbol (or type 'done' to finish): ")
+        if symbol.lower() == 'done':
+            break
+        quantity = int(input(f"Enter quantity for {symbol}: "))
+        investment = float(input(f"Enter amount invested in {symbol}: "))
+        portfolio.append({'symbol': symbol, 'quantity': quantity, 'investment': investment})
+    return portfolio
+
+# **Final Report Generation**
 def generate_report(stock_data, portfolio):
-    # Calculate profit/loss
-    total_invested, total_current_value, total_profit_loss, profit_loss_details = calculate_profit_loss(stock_data, portfolio)
+    print("Generating report...\n")
     
-    # Stop-loss Calculation
-    stop_loss_details = stop_loss_calculation(stock_data, portfolio)
+    # 1. Sector Allocation
+    print("Sector Allocation:")
+    sector_allocation = get_sector_data(portfolio)
+    plot_sector_allocation(sector_allocation)
     
-    # Sector Allocation
-    sectors = sector_allocation(list(portfolio.keys()))
+    # 2. Portfolio Performance vs NIFTY
+    print("Portfolio vs NIFTY 50 Performance:")
+    portfolio_vs_nifty(stock_data, portfolio)
     
-    # Portfolio Performance vs Index
-    portfolio_returns, index_returns = portfolio_vs_index(stock_data, portfolio)
+    # 3. Current Portfolio Value
+    portfolio_value = current_portfolio_value(portfolio, stock_data)
+    print(f"Current Portfolio Value: ₹{portfolio_value:,.2f}")
     
-    # News Sentiment Analysis
-    sentiment_scores = news_sentiment_analysis(list(portfolio.keys()))
+    # 4. Predicted Portfolio Value (Monte Carlo Simulation)
+    print("Monte Carlo Simulation Results:")
+    monte_carlo_results = monte_carlo_simulation(stock_data, portfolio)
     
-    # Portfolio Optimization
-    cleaned_weights, performance = optimize_portfolio(stock_data, portfolio)
-    
-    # Monte Carlo Simulation
-    monte_carlo_results = {}
-    for symbol, data in stock_data.items():
-        mean_price, fifth_percentile, ninety_fifth_percentile, simulation_results = monte_carlo_simulation(data)
-        monte_carlo_results[symbol] = {
-            'mean': mean_price,
-            '5th_percentile': fifth_percentile,
-            '95th_percentile': ninety_fifth_percentile
-        }
-        # Plot Monte Carlo Simulation
-        plt.figure(figsize=(10,6))
-        plt.plot(simulation_results, color='blue', alpha=0.1)
-        plt.title(f"Monte Carlo Simulation for {symbol}")
-        plt.xlabel('Days')
-        plt.ylabel('Price (INR)')
-        plt.show()
+    # 5. Stock Recommendations
+    print("Stock Recommendations:")
+    recommendations = stock_recommendations(portfolio, stock_data)
+    for recommendation in recommendations:
+        print(f"{recommendation['symbol']} - {recommendation['recommendation']}")
 
-    # Plot Candlestick Charts and Stock Price Predictions
-    for symbol in portfolio.keys():
-        plot_candlestick(symbol, stock_data[symbol])
-        predict_stock_price(symbol, stock_data[symbol])
+    # 6. Sentiment Analysis
+    print("Sentiment Analysis:")
+    news_sentiments = news_sentiment_analysis([stock['symbol'] for stock in portfolio])
+    for symbol, sentiment in news_sentiments.items():
+        print(f"{symbol}: {sentiment}")
     
-    # Print Detailed Report
-    print("\n--- Portfolio Summary ---")
-    print(f"Total Invested: ₹{total_invested:.2f}")
-    print(f"Total Current Value: ₹{total_current_value:.2f}")
-    print(f"Total Profit/Loss: ₹{total_profit_loss:.2f} ({(total_profit_loss/total_invested)*100:.2f}%)")
+    # 7. Profit/Loss Calculation
+    print("Profit/Loss:")
+    profit_loss_results = profit_loss(portfolio, stock_data)
+    for result in profit_loss_results:
+        print(f"{result['symbol']} - P/L: ₹{result['P/L']:,.2f}")
     
-    print("\n--- Sector Allocation ---")
-    for sector, count in sectors.items():
-        print(f"{sector}: {count} stocks")
+    # 8. Portfolio Optimization
+    print("Optimizing Portfolio:")
+    optimized_weights = portfolio_optimization(stock_data, portfolio)
+    print("Optimized Weights:")
+    for symbol, weight in optimized_weights.items():
+        print(f"{symbol}: {weight * 100:.2f}%")
     
-    print("\n--- Portfolio vs NIFTY 50 ---")
-    print(f"Portfolio Return: {portfolio_returns.sum() * 100:.2f}%")
-    print(f"NIFTY 50 Return: {index_returns.sum() * 100:.2f}%")
+    # 9. Technical Indicators
+    print("Technical Indicators:")
+    for stock in portfolio:
+        print(f"\n{stock['symbol']} Technical Indicators:")
+        technical_indicators = calculate_technical_indicators(stock_data, stock['symbol'])
+        print(technical_indicators)
     
-    print("\n--- News Sentiment Analysis ---")
-    for symbol, sentiment in sentiment_scores.items():
-        print(f"{symbol}: Sentiment Score = {sentiment:.2f}")
-        if sentiment > 0:
-            print(f"Sentiment is positive, which may positively impact the stock.")
-        elif sentiment < 0:
-            print(f"Sentiment is negative, which may negatively impact the stock.")
-        else:
-            print(f"Sentiment is neutral.")
+    # 10. Stock Price Prediction (Prophet)
+    for stock in portfolio:
+        print(f"\n{stock['symbol']} Stock Price Prediction:")
+        predict_stock_price(stock['symbol'], stock_data[stock['symbol']])
     
-    print("\n--- Portfolio Optimization (Sharpe Ratio) ---")
-    print(f"Optimized Portfolio Weights: {cleaned_weights}")
-    print(f"Expected Annual Return: {performance[0] * 100:.2f}%")
-    print(f"Annual Volatility: {performance[1] * 100:.2f}%")
-    print(f"Sharpe Ratio: {performance[2]:.2f}")
+    # 11. Detailed Summary of Portfolio
+    print("\nDetailed Portfolio Summary:")
+    summary, total_value = portfolio_summary(portfolio, stock_data)
+    for item in summary:
+        print(f"{item['symbol']}: Quantity {item['quantity']}, Total Value: ₹{item['total_value']:,.2f}, P/L: ₹{item['P/L']:,.2f}")
+    print(f"Total Portfolio Value: ₹{total_value:,.2f}")
     
-    print("\n--- Monte Carlo Simulations ---")
-    for symbol, result in monte_carlo_results.items():
-        print(f"{symbol}: Predicted 30-day Price Range = ₹{result['5th_percentile']:.2f} to ₹{result['95th_percentile']:.2f} (Mean: ₹{result['mean']:.2f})")
+    # 12. Portfolio Potential
+    print("\nPortfolio Potential Analysis:")
+    potential_values = portfolio_potential_analysis(portfolio, stock_data)
+    for value in potential_values:
+        print(f"{value['symbol']} expected value: ₹{value['expected_value']:,.2f}")
+    
+    print("\nReport generation complete!")
 
-# User Input for stock symbol, quantity, total amount invested
-portfolio = {}
-print("Enter your portfolio details:")
-while True:
-    symbol = input("Enter stock symbol (or type 'done' to finish): ").upper()
-    if symbol.lower() == 'done':
-        break
-    quantity = int(input(f"Enter quantity for {symbol}: "))
-    invested = float(input(f"Enter amount invested in {symbol}: ₹"))
-    portfolio[symbol] = {'quantity': quantity, 'total_invested': invested}
-
-# Fetch stock data
-stock_symbols = list(portfolio.keys())
-stock_data = get_stock_data(stock_symbols)
-
-# Generate and display the report
-generate_report(stock_data, portfolio)
+# Main Execution
+if __name__ == "__main__":
+    portfolio = get_user_input()
+    stock_symbols = [stock['symbol'] for stock in portfolio]
+    stock_data = get_stock_data(stock_symbols)
+    
+    # Generate report
+    generate_report(stock_data, portfolio)

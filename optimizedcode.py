@@ -13,6 +13,7 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings("ignore")
 
+# Fetch stock data
 def get_stock_data(stock_symbols):
     stock_data = {}
     for symbol in stock_symbols:
@@ -43,7 +44,7 @@ def get_sector_data(portfolio):
             print(f"Error fetching data for {symbol}: {e}")
     
     return sector_allocation
-
+#  Plotting sector allocation
 def plot_sector_allocation(sector_allocation):
     # Plot sector allocation using pie chart
     sectors = list(sector_allocation.keys())
@@ -145,7 +146,7 @@ def stock_recommendations(portfolio, stock_data):
         sector = get_stock_sector(symbol)
         performance = stock_data[symbol]['Adj Close'].pct_change().tail(1).iloc[0]  # Last day performance
 
-        # Basic logic for recommendations (for demonstration purposes)
+        # Basic logic for recommendations 
         if performance > 0.05:
             recommendation = 'Buy'
         elif performance < -0.05:

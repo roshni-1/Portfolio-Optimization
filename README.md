@@ -21,3 +21,4 @@ Risk Analysis: Analyzes news sentiment and performs Monte Carlo simulation for p
 Portfolio Optimization: Optimizes portfolio weights using the Sharpe Ratio.
 Visualization: Generates candlestick charts and plots price forecasts.
 Reporting: Creates a detailed report with all the analysis results.
+TIP Sheet

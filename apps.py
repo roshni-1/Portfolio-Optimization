@@ -13,8 +13,11 @@ from textblob import TextBlob
 from nsetools import Nse
 from nsepy.symbols import get_symbol_list
 from datetime import timedelta, datetime
+import requests
+from bs4 import BeautifulSoup
 
 # Constants
+API_KEY = "7VSPP0ZXIEV4M794"  # Alpha Vantage API Key
 RISK_FREE_RATE = 7.365 / 100  # For portfolio optimization
 
 # --- Helper Functions ---
@@ -129,6 +132,64 @@ def calculate_volume_oscillator(data, fast_window=12, slow_window=26):
     slow_ema = data["Volume"].ewm(span=slow_window, adjust=False).mean()
     volume_oscillator = ((fast_ema - slow_ema) / slow_ema) * 100
     return volume_oscillator
+def fetch_trending_sectors():
+    """Fetch real-time sector performance from Alpha Vantage."""
+    try:
+        url = "https://www.alphavantage.co/query"
+        params = {"function": "SECTOR", "apikey": API_KEY}
+        response = requests.get(url, params=params)
+        data = response.json()
+
+        # Check if response contains sector performance data
+        if "Rank A: Real-Time Performance" in data:
+            sector_data = data["Rank A: Real-Time Performance"]
+            df = pd.DataFrame(list(sector_data.items()), columns=["Sector", "Change (%)"])
+            df["Change (%)"] = df["Change (%)"].str.replace("%", "").astype(float)
+            return df.sort_values(by="Change (%)", ascending=False)
+        else:
+            st.error("Error fetching sector data: No valid data returned from Alpha Vantage.")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Exception occurred while fetching sectors: {e}")
+        return pd.DataFrame()
+
+def fetch_trending_stocks():
+    """Fetch trending stocks using Alpha Vantage."""
+    try:
+        stock_symbols = ["RELIANCE.BSE", "TCS.BSE", "HDFCBANK.BSE", "INFY.BSE", "ICICIBANK.BSE"]
+        stock_data = []
+
+        for symbol in stock_symbols:
+            url = "https://www.alphavantage.co/query"
+            params = {
+                "function": "TIME_SERIES_INTRADAY",
+                "symbol": symbol,
+                "interval": "5min",
+                "apikey": API_KEY
+            }
+            response = requests.get(url, params=params)
+            data = response.json()
+
+            # Check if response contains time series data
+            if "Time Series (5min)" in data:
+                latest_time = max(data["Time Series (5min)"].keys())
+                open_price = float(data["Time Series (5min)"][latest_time]["1. open"])
+                close_price = float(data["Time Series (5min)"][latest_time]["4. close"])
+                percent_change = ((close_price - open_price) / open_price) * 100
+
+                stock_data.append({
+                    "Stock": symbol,
+                    "Price (₹)": round(close_price, 2),
+                    "Change (%)": round(percent_change, 2)
+                })
+            else:
+                st.warning(f"No time series data available for {symbol}. Skipping.")
+
+        return pd.DataFrame(stock_data).sort_values(by="Change (%)", ascending=False)
+    except Exception as e:
+        st.error(f"Exception occurred while fetching stocks: {e}")
+        return pd.DataFrame()
+
 
 # --- Streamlit Layout ---
 st.set_page_config(page_title="Smart Portfolio Advisor", layout="wide")
@@ -168,7 +229,7 @@ tabs = st.tabs(
     ]
 )
 
-# --- Implemented Features ---
+# --- Implement Features ---
 with tabs[0]:
     st.header("1️⃣ Portfolio Summary")
     summary_data = []
@@ -421,74 +482,96 @@ with tabs[3]:
     st.header("4️⃣ Monte Carlo Simulation")
 
     for stock in portfolio:
+        st.subheader(f"Monte Carlo Simulation for {stock['symbol']}")
+
+        # Fetch historical data
         data = fetch_stock_data(stock["symbol"], "6mo")
         if not data.empty:
+            # Run Monte Carlo Simulation
             simulations = monte_carlo_simulation(data, days=30, simulations=1000)
+
+            # Calculate Statistical Metrics
+            mean_price = np.mean(simulations)
+            median_price = np.median(simulations)
+            lower_ci = np.percentile(simulations, 2.5)  # 2.5th percentile for 95% confidence interval
+            upper_ci = np.percentile(simulations, 97.5)  # 97.5th percentile for 95% confidence interval
+
+            # Plot Histogram with Annotations
             fig = px.histogram(
-                simulations, nbins=50, title=f"Monte Carlo Simulation for {stock['symbol']}",
+                simulations,
+                nbins=50,
+                title=f"Monte Carlo Simulation for {stock['symbol']}",
                 labels={"value": "Simulated Price (₹)", "count": "Frequency"}
             )
+            fig.add_vline(x=mean_price, line_width=2, line_dash="dash", line_color="blue", annotation_text="Mean")
+            fig.add_vline(x=median_price, line_width=2, line_dash="dash", line_color="green", annotation_text="Median")
+            fig.add_vline(x=lower_ci, line_width=2, line_dash="dot", line_color="red", annotation_text="2.5% CI")
+            fig.add_vline(x=upper_ci, line_width=2, line_dash="dot", line_color="red", annotation_text="97.5% CI")
             fig.update_layout(bargap=0.1)
             st.plotly_chart(fig)
 
+            # Display Metrics
+            st.write("### Statistical Metrics")
+            st.write(f"**Mean (Average Price):** ₹{mean_price:.2f}")
+            st.write(f"**Median (Middle Price):** ₹{median_price:.2f}")
+            st.write(f"**95% Confidence Interval:** ₹{lower_ci:.2f} to ₹{upper_ci:.2f}")
+
+            # Textual Explanation
+            st.write("### What This Means")
             st.markdown(f"""
-                **What this means for {stock['symbol']}:**  
-                - This histogram shows potential price ranges for {stock['symbol']} in the next 30 days.  
-                - Wider distributions indicate higher volatility, meaning the price could vary more significantly.  
+                - The histogram shows the distribution of possible prices for {stock['symbol']} after 30 days based on historical trends.
+                - The **mean price** (blue line) is the average of all simulated outcomes.
+                - The **median price** (green line) represents the middle simulated value, indicating that 50% of the simulations are below this price and 50% are above.
+                - The **95% confidence interval** (red lines) indicates that there is a 95% chance the price will fall between ₹{lower_ci:.2f} and ₹{upper_ci:.2f}.
+            """)
+
+            # Visual Explanation
+            st.write("### Visual Explanation")
+            st.markdown("""
+                - The histogram's shape shows the range and frequency of potential prices.
+                - Use the confidence interval to assess the potential downside and upside risk of the stock.
+            """)
+            st.write("#### Suggested Actions")
+            st.markdown(f"""
+                - If the lower confidence interval is significantly below your stop-loss level, you may consider reducing exposure.
+                - If the mean or median price aligns with your profit goals, consider holding your position.
+                - Review other technical indicators for confirmation.
             """)
 
 # --- Feature 5: Trending Sectors & Stocks ---
 with tabs[4]:
     st.header("5️⃣ Trending Sectors & Stocks")
+# Fetch and display sector performance
+st.subheader("Trending Sectors")
+sectors_df = fetch_trending_sectors()
+if not sectors_df.empty:
+    fig_sectors = px.bar(
+        sectors_df,
+        x="Change (%)",
+        y="Sector",
+        orientation="h",
+        title="Trending Sectors in the Indian Market",
+        text="Change (%)",
+    )
+    fig_sectors.update_traces(textposition="outside")
+    st.plotly_chart(fig_sectors)
+else:
+    st.write("No trending sectors found.")
 
-    # Fetch real-time NIFTY 50 symbols
-    nifty_50_symbols = fetch_nifty_50_symbols()
-
-    sector_performance = {}
-    trending_stocks = []
-
-    for symbol in nifty_50_symbols:
-        try:
-            ticker = yf.Ticker(symbol)
-            stock_info = ticker.info
-            sector = stock_info.get("sector", "Unknown")
-            data = ticker.history(period="1d", interval="1m")
-
-            if not data.empty:
-                open_price = data["Open"].iloc[0]
-                close_price = data["Close"].iloc[-1]
-                percent_change = ((close_price - open_price) / open_price) * 100
-
-                if sector != "Unknown":
-                    if sector not in sector_performance:
-                        sector_performance[sector] = []
-                    sector_performance[sector].append(percent_change)
-
-                if abs(percent_change) > 2:
-                    trending_stocks.append({
-                        "Stock": symbol,
-                        "Sector": sector,
-                        "Current Price (₹)": round(close_price, 2),
-                        "% Change": round(percent_change, 2)
-                    })
-        except Exception as e:
-            st.error(f"Error fetching data for {symbol}: {e}")
-
-    avg_sector_performance = {sector: np.mean(changes) for sector, changes in sector_performance.items()}
-    if avg_sector_performance:
-        sector_df = pd.DataFrame(list(avg_sector_performance.items()), columns=["Sector", "Average % Change"])
-        fig = px.bar(sector_df, x="Sector", y="Average % Change", title="Trending Sectors")
-        st.plotly_chart(fig)
-    else:
-        st.write("No trending sectors found.")
-
-    if trending_stocks:
-        trending_stocks_df = pd.DataFrame(trending_stocks)
-        st.dataframe(trending_stocks_df)
-    else:
-        st.write("No trending stocks found.")
-
-
+# Fetch and display trending stocks
+st.subheader("Trending Stocks")
+stocks_df = fetch_trending_stocks()
+if not stocks_df.empty:
+    for _, row in stocks_df.iterrows():
+        col1, col2, col3 = st.columns([2, 2, 1])
+        with col1:
+            st.markdown(f"**{row['Stock']}**")
+        with col2:
+            st.metric("Price (₹)", row["Price (₹)"])
+        with col3:
+            st.metric("Change (%)", f"{row['Change (%)']}%")
+else:
+    st.write("No trending stocks found.")
 # --- Feature 6: Investment Advice ---
 with tabs[5]:
     st.header("6️⃣ Investment Advice")
@@ -642,4 +725,3 @@ with tabs[10]:
     st.write("3. Use Monte Carlo simulations to assess potential outcomes.")
     st.write("4. Review tax impacts to minimize liabilities.")
     st.write("5. Apply insights from technical analysis and news sentiment.")
-

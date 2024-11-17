@@ -17,7 +17,7 @@ import requests
 from bs4 import BeautifulSoup
 
 # Constants
-API_KEY = "7VSPP0ZXIEV4M794"  # Alpha Vantage API Key
+API_KEY = "************************"  # Alpha Vantage API Key
 RISK_FREE_RATE = 7.365 / 100  # For portfolio optimization
 
 # --- Helper Functions ---

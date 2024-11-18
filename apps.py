@@ -229,7 +229,7 @@ tabs = st.tabs(
     ]
 )
 
-# --- Implement Features ---
+# --- Implemented Features ---
 with tabs[0]:
     st.header("1️⃣ Portfolio Summary")
     summary_data = []
@@ -306,12 +306,12 @@ with tabs[1]:
             # --- Technical Indicators ---
             st.subheader("Technical Indicators")
 
-            # Ensure sufficient data for indicator calculations
+            #  Checking if there is sufficient data for indicator calculations
             if len(data) < 20:
                 st.warning(f"Not enough data to calculate all indicators for {stock['symbol']}. At least 20 rows are required.")
                 continue
 
-            # Calculate Indicators
+            # Calculating Indicators
             try:
                 # RSI
                 data["RSI"] = ta.momentum.rsi(data["Close"], window=14)
@@ -348,7 +348,7 @@ with tabs[1]:
                 st.error(f"Error calculating indicators for {stock['symbol']}: {e}")
                 continue
 
-            # Display Values
+            # Displaying Values
             indicators = {
                 "RSI (Relative Strength Index)": data["RSI"].iloc[-1],
                 "EMA (20-day Exponential Moving Average)": data["EMA_20"].iloc[-1],

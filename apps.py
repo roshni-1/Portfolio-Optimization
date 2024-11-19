@@ -15,9 +15,10 @@ from nsepy.symbols import get_symbol_list
 from datetime import timedelta, datetime
 import requests
 from bs4 import BeautifulSoup
+import http.client
+import json
 
 # Constants
-API_KEY = "************************"  # Alpha Vantage API Key
 RISK_FREE_RATE = 7.365 / 100  # For portfolio optimization
 
 # --- Helper Functions ---
@@ -132,64 +133,85 @@ def calculate_volume_oscillator(data, fast_window=12, slow_window=26):
     slow_ema = data["Volume"].ewm(span=slow_window, adjust=False).mean()
     volume_oscillator = ((fast_ema - slow_ema) / slow_ema) * 100
     return volume_oscillator
-def fetch_trending_sectors():
-    """Fetch real-time sector performance from Alpha Vantage."""
+# --- Functions to Fetch Market Movers ---
+def fetch_market_movers(region="IN", lang="en-US", start=0, count=10):
+    """Fetch market movers (top gainers, losers, active stocks) using Yahoo Finance API."""
+    conn = http.client.HTTPSConnection("apidojo-yahoo-finance-v1.p.rapidapi.com")
+    headers = {
+        'x-rapidapi-key': "5d63bb22bemshb6e582f5cdfd2cdp1d4344jsn14c1f5cdfd2cdp1d4344jsn14c1f5b16633",  # Replace with your API key
+        'x-rapidapi-host': "apidojo-yahoo-finance-v1.p.rapidapi.com"
+    }
+
     try:
-        url = "https://www.alphavantage.co/query"
-        params = {"function": "SECTOR", "apikey": API_KEY}
-        response = requests.get(url, params=params)
-        data = response.json()
+        # Request market movers
+        conn.request("GET", f"/market/v2/get-movers?region={region}&lang={lang}&start={start}&count={count}", headers=headers)
+        res = conn.getresponse()
+        data = res.read()
 
-        # Check if response contains sector performance data
-        if "Rank A: Real-Time Performance" in data:
-            sector_data = data["Rank A: Real-Time Performance"]
-            df = pd.DataFrame(list(sector_data.items()), columns=["Sector", "Change (%)"])
-            df["Change (%)"] = df["Change (%)"].str.replace("%", "").astype(float)
-            return df.sort_values(by="Change (%)", ascending=False)
-        else:
-            st.error("Error fetching sector data: No valid data returned from Alpha Vantage.")
-            return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Exception occurred while fetching sectors: {e}")
-        return pd.DataFrame()
+        # Decode and parse the response
+        response_json = json.loads(data.decode("utf-8"))
+        st.write("Debugging API Response:", response_json)  # Debugging API response
 
-def fetch_trending_stocks():
-    """Fetch trending stocks using Alpha Vantage."""
-    try:
-        stock_symbols = ["RELIANCE.BSE", "TCS.BSE", "HDFCBANK.BSE", "INFY.BSE", "ICICIBANK.BSE"]
-        stock_data = []
-
-        for symbol in stock_symbols:
-            url = "https://www.alphavantage.co/query"
-            params = {
-                "function": "TIME_SERIES_INTRADAY",
-                "symbol": symbol,
-                "interval": "5min",
-                "apikey": API_KEY
-            }
-            response = requests.get(url, params=params)
-            data = response.json()
-
-            # Check if response contains time series data
-            if "Time Series (5min)" in data:
-                latest_time = max(data["Time Series (5min)"].keys())
-                open_price = float(data["Time Series (5min)"][latest_time]["1. open"])
-                close_price = float(data["Time Series (5min)"][latest_time]["4. close"])
-                percent_change = ((close_price - open_price) / open_price) * 100
-
-                stock_data.append({
-                    "Stock": symbol,
-                    "Price (₹)": round(close_price, 2),
-                    "Change (%)": round(percent_change, 2)
+        # Extract movers data
+        movers = []
+        for category in response_json.get("finance", {}).get("result", []):
+            for stock in category.get("quotes", []):
+                movers.append({
+                    "Symbol": stock.get("symbol", "N/A"),
+                    "Name": stock.get("shortName", stock.get("symbol", "N/A")),  # Fallback to symbol
+                    "Price (₹)": stock.get("regularMarketPrice", "N/A"),
+                    "Type": category.get("title", "Unknown"),
+                    "Logo": f"https://logo.clearbit.com/{stock.get('symbol', '').split('.')[0].lower()}.com"
+                            if stock.get("symbol") else "https://via.placeholder.com/50"  # Fallback to placeholder logo
                 })
-            else:
-                st.warning(f"No time series data available for {symbol}. Skipping.")
 
-        return pd.DataFrame(stock_data).sort_values(by="Change (%)", ascending=False)
+        return pd.DataFrame(movers)
+
     except Exception as e:
-        st.error(f"Exception occurred while fetching stocks: {e}")
+        st.error(f"Error fetching market movers: {e}")
         return pd.DataFrame()
 
+# --- Function to Fetch Sector Performance ---
+def fetch_sector_performance():
+    """Fetch sector performance in the Indian market using yfinance."""
+    sectoral_indices = {
+        "NIFTY IT": "^CNXIT",
+        "NIFTY Pharma": "^CNXPHARMA",
+        "NIFTY Bank": "^NSEBANK",
+        "NIFTY FMCG": "^CNXFMCG",
+        "NIFTY Auto": "^CNXAUTO",
+        "NIFTY Realty": "^CNXREALTY",
+        "NIFTY Energy": "^CNXENERGY",
+        "NIFTY Infra": "^CNXINFRA",
+        "NIFTY Media": "^CNXMEDIA",
+        "NIFTY Metal": "^CNXMETAL",
+    }
+
+    performance_data = []
+
+    for sector, ticker in sectoral_indices.items():
+        try:
+            # Fetch the last 5 days of data for the index
+            data = yf.download(ticker, period="5d", interval="1d")
+            
+            # Calculate performance as percentage change
+            if len(data) > 1:
+                initial_price = data['Close'].iloc[0]
+                latest_price = data['Close'].iloc[-1]
+                performance = ((latest_price - initial_price) / initial_price) * 100
+                performance_data.append({
+                    "Sector": sector,
+                    "Performance (%)": round(performance, 2),
+                    "Current Price": round(latest_price, 2)
+                })
+        except Exception as e:
+            st.error(f"Error fetching data for {sector}: {e}")
+
+    # Create a DataFrame
+    df = pd.DataFrame(performance_data)
+    if not df.empty:
+        df = df.sort_values(by="Performance (%)", ascending=False)  # Sort by performance
+    return df
 
 # --- Streamlit Layout ---
 st.set_page_config(page_title="Smart Portfolio Advisor", layout="wide")
@@ -229,7 +251,7 @@ tabs = st.tabs(
     ]
 )
 
-# --- Implemented Features ---
+# --- Implement Features ---
 with tabs[0]:
     st.header("1️⃣ Portfolio Summary")
     summary_data = []
@@ -306,12 +328,12 @@ with tabs[1]:
             # --- Technical Indicators ---
             st.subheader("Technical Indicators")
 
-            #  Checking if there is sufficient data for indicator calculations
+            # Ensure sufficient data for indicator calculations
             if len(data) < 20:
                 st.warning(f"Not enough data to calculate all indicators for {stock['symbol']}. At least 20 rows are required.")
                 continue
 
-            # Calculating Indicators
+            # Calculate Indicators
             try:
                 # RSI
                 data["RSI"] = ta.momentum.rsi(data["Close"], window=14)
@@ -348,7 +370,7 @@ with tabs[1]:
                 st.error(f"Error calculating indicators for {stock['symbol']}: {e}")
                 continue
 
-            # Displaying Values
+            # Display Values
             indicators = {
                 "RSI (Relative Strength Index)": data["RSI"].iloc[-1],
                 "EMA (20-day Exponential Moving Average)": data["EMA_20"].iloc[-1],
@@ -540,38 +562,56 @@ with tabs[3]:
 
 # --- Feature 5: Trending Sectors & Stocks ---
 with tabs[4]:
-    st.header("5️⃣ Trending Sectors & Stocks")
-# Fetch and display sector performance
-st.subheader("Trending Sectors")
-sectors_df = fetch_trending_sectors()
-if not sectors_df.empty:
-    fig_sectors = px.bar(
-        sectors_df,
-        x="Change (%)",
-        y="Sector",
-        orientation="h",
-        title="Trending Sectors in the Indian Market",
-        text="Change (%)",
-    )
-    fig_sectors.update_traces(textposition="outside")
-    st.plotly_chart(fig_sectors)
-else:
-    st.write("No trending sectors found.")
+    st.header("5️⃣ Trending Stocks and Sectors")
 
-# Fetch and display trending stocks
-st.subheader("Trending Stocks")
-stocks_df = fetch_trending_stocks()
-if not stocks_df.empty:
-    for _, row in stocks_df.iterrows():
-        col1, col2, col3 = st.columns([2, 2, 1])
+    # --- Market Movers Section ---
+    st.subheader("📊 Market Movers (Trending Stocks)")
+
+   # Fetch and display data
+    market_movers_df = fetch_market_movers()
+
+if not market_movers_df.empty:
+    st.write("### Top Market Movers")
+    for index, row in market_movers_df.iterrows():
+        col1, col2, col3, col4 = st.columns([1, 2, 3, 2])
         with col1:
-            st.markdown(f"**{row['Stock']}**")
+            # Display Stock Logo
+            st.image(row["Logo"], width=50)
         with col2:
-            st.metric("Price (₹)", row["Price (₹)"])
+            # Display Stock Symbol
+            st.markdown(f"**{row['Symbol']}**")
         with col3:
-            st.metric("Change (%)", f"{row['Change (%)']}%")
+            # Display Stock Name
+            st.markdown(f"**{row['Name']}**")
+        with col4:
+            # Display Stock Price
+            st.markdown(f"**₹{row['Price (₹)']}**")
 else:
-    st.write("No trending stocks found.")
+    st.warning("No market movers data available. Try again later.")
+
+    # --- Trending Sectors Section ---
+    st.subheader("📈 Trending Sectors")
+    sectors_df = fetch_sector_performance()
+
+    if not sectors_df.empty:
+        st.write("### Sector Performance (Last 5 Days)")
+        st.dataframe(sectors_df.style.format({"Performance (%)": "{:.2f}%", "Current Price": "₹{:.2f}"}))
+
+        # Create Grouped Bar Chart
+        fig = px.bar(
+            sectors_df,
+            x="Sector",
+            y="Performance (%)",
+            color="Sector",
+            text="Performance (%)",
+            title="Sectoral Performance (Grouped Bar Chart)",
+            labels={"Performance (%)": "Change (%)", "Sector": "Sector Name"}
+        )
+        fig.update_traces(textposition="outside")
+        st.plotly_chart(fig)
+    else:
+        st.warning("No sector performance data available. Try again later.")
+
 # --- Feature 6: Investment Advice ---
 with tabs[5]:
     st.header("6️⃣ Investment Advice")

@@ -134,11 +134,12 @@ def calculate_volume_oscillator(data, fast_window=12, slow_window=26):
     volume_oscillator = ((fast_ema - slow_ema) / slow_ema) * 100
     return volume_oscillator
 # --- Functions to Fetch Market Movers ---
+# --- Fetch Market Movers ---
 def fetch_market_movers(region="IN", lang="en-US", start=0, count=10):
     """Fetch market movers (top gainers, losers, active stocks) using Yahoo Finance API."""
     conn = http.client.HTTPSConnection("apidojo-yahoo-finance-v1.p.rapidapi.com")
     headers = {
-        'x-rapidapi-key': "5d63bb22bemshb6e582f5cdfd2cdp1d4344jsn14c1f5cdfd2cdp1d4344jsn14c1f5b16633",  # Replace with your API key
+        'x-rapidapi-key': "5d63bb22bemshb6e582f5cdfd2cdp1d4344jsn14c1f5b16633",
         'x-rapidapi-host': "apidojo-yahoo-finance-v1.p.rapidapi.com"
     }
 
@@ -150,19 +151,19 @@ def fetch_market_movers(region="IN", lang="en-US", start=0, count=10):
 
         # Decode and parse the response
         response_json = json.loads(data.decode("utf-8"))
-        st.write("Debugging API Response:", response_json)  # Debugging API response
 
         # Extract movers data
         movers = []
         for category in response_json.get("finance", {}).get("result", []):
+            category_title = category.get("title", "Unknown Category")
             for stock in category.get("quotes", []):
+                stock_symbol = stock.get("symbol", "N/A")
+                price = stock.get("regularMarketPrice", "N/A")
+
                 movers.append({
-                    "Symbol": stock.get("symbol", "N/A"),
-                    "Name": stock.get("shortName", stock.get("symbol", "N/A")),  # Fallback to symbol
-                    "Price (₹)": stock.get("regularMarketPrice", "N/A"),
-                    "Type": category.get("title", "Unknown"),
-                    "Logo": f"https://logo.clearbit.com/{stock.get('symbol', '').split('.')[0].lower()}.com"
-                            if stock.get("symbol") else "https://via.placeholder.com/50"  # Fallback to placeholder logo
+                    "Category": category_title,
+                    "Symbol": stock_symbol,
+                    "Price (₹)": price,
                 })
 
         return pd.DataFrame(movers)
@@ -212,6 +213,90 @@ def fetch_sector_performance():
     if not df.empty:
         df = df.sort_values(by="Performance (%)", ascending=False)  # Sort by performance
     return df
+
+# --- Investment Advice Feature ---
+def investment_advice(portfolio, total_funds):
+    """
+    Generate investment advice based on the user's portfolio, available funds, and market conditions.
+    
+    Parameters:
+    - portfolio: List of dictionaries containing stock symbols, quantities, invested amounts, and stop-loss percentages.
+    - total_funds: Total funds available for investment.
+    
+    Returns:
+    - advice_df: DataFrame containing buy/hold/sell advice and quantities.
+    - diversification_options: Suggestions for other investment opportunities.
+    - explainability: Detailed explanations for the advice.
+    """
+    advice_data = []
+    diversification_options = []
+    explainability = []
+
+    for stock in portfolio:
+        # Fetch current stock data
+        data = fetch_stock_data(stock["symbol"], "6mo")
+        if data.empty:
+            st.error(f"Unable to fetch data for {stock['symbol']}. Skipping.")
+            continue
+
+        # Extract necessary data
+        current_price = data["Close"].iloc[-1]
+        qty_owned = stock["qty"]
+        invested_amount = stock["invested"]
+        stop_loss_price = current_price * (1 - stock["stop_loss_pct"] / 100)
+
+        # Determine buy/hold/sell action
+        action = ""
+        quantity = 0
+
+        if current_price < stop_loss_price:  # Stock is nearing stop-loss
+            action = "Sell"
+            quantity = qty_owned
+            explainability.append(
+                f"{stock['symbol']} is nearing its stop-loss price of ₹{stop_loss_price:.2f}. "
+                f"Consider selling all holdings."
+            )
+        elif current_price < invested_amount / qty_owned:  # Current price is below average purchase price
+            action = "Hold"
+            explainability.append(
+                f"{stock['symbol']} is trading below your average purchase price. "
+                f"Consider holding for recovery."
+            )
+        else:  # Potential buy opportunity
+            max_buy_qty = total_funds // current_price
+            action = "Buy"
+            quantity = int(max_buy_qty * 0.2)  # Invest 20% of available funds
+            explainability.append(
+                f"{stock['symbol']} is performing well, with potential for growth. "
+                f"Consider buying {quantity} shares."
+            )
+
+        advice_data.append({
+            "Stock": stock["symbol"],
+            "Current Price (₹)": current_price,
+            "Action": action,
+            "Quantity": quantity,
+        })
+
+    # Generate diversification options based on sector performance
+    sectors_df = fetch_sector_performance()
+    if not sectors_df.empty:
+        top_sectors = sectors_df.head(3)  # Top 3 performing sectors
+        for _, row in top_sectors.iterrows():
+            diversification_options.append({
+                "Sector": row["Sector"],
+                "Performance (%)": row["Performance (%)"],
+                "Suggested Investment (₹)": total_funds * 0.1  # Suggest 10% of funds for diversification
+            })
+        explainability.append(
+            "Consider diversifying into top-performing sectors for balanced growth."
+        )
+
+    # Create DataFrames for advice and diversification options
+    advice_df = pd.DataFrame(advice_data)
+    diversification_df = pd.DataFrame(diversification_options)
+
+    return advice_df, diversification_df, explainability
 
 # --- Streamlit Layout ---
 st.set_page_config(page_title="Smart Portfolio Advisor", layout="wide")
@@ -567,25 +652,29 @@ with tabs[4]:
     # --- Market Movers Section ---
     st.subheader("📊 Market Movers (Trending Stocks)")
 
-   # Fetch and display data
+  # Fetch market movers
     market_movers_df = fetch_market_movers()
 
 if not market_movers_df.empty:
-    st.write("### Top Market Movers")
-    for index, row in market_movers_df.iterrows():
-        col1, col2, col3, col4 = st.columns([1, 2, 3, 2])
-        with col1:
-            # Display Stock Logo
-            st.image(row["Logo"], width=50)
-        with col2:
-            # Display Stock Symbol
-            st.markdown(f"**{row['Symbol']}**")
-        with col3:
-            # Display Stock Name
-            st.markdown(f"**{row['Name']}**")
-        with col4:
-            # Display Stock Price
-            st.markdown(f"**₹{row['Price (₹)']}**")
+    # Group by category
+    for category in market_movers_df["Category"].unique():
+        st.subheader(category)  # Display category (e.g., Top Gainers, Top Losers)
+        category_data = market_movers_df[market_movers_df["Category"] == category]
+
+        # Create cards for each stock
+        cols = st.columns(3)  # Display cards in a grid (3 per row)
+        for index, row in category_data.iterrows():
+            col = cols[index % 3]  # Distribute cards across columns
+            with col:
+                st.markdown(
+                    f"""
+                    <div style="border: 2px solid #ddd; border-radius: 10px; padding: 15px; margin-bottom: 15px; text-align: center; box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);">
+                        <h3 style="margin: 0; color: #333;">{row['Symbol']}</h3>
+                        <p style="font-size: 20px; color: #4caf50; font-weight: bold;">₹{row['Price (₹)']}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 else:
     st.warning("No market movers data available. Try again later.")
 
@@ -616,20 +705,27 @@ else:
 with tabs[5]:
     st.header("6️⃣ Investment Advice")
 
-    advice = []
-    for stock in portfolio:
-        data = fetch_stock_data(stock["symbol"], "6mo")
-        if not data.empty:
-            current_price = data["Close"].iloc[-1]
-            moving_avg = data["Close"].rolling(window=20).mean().iloc[-1]
+   # Fetch total funds available for investment
+    total_funds = st.sidebar.number_input("Total Funds Available (₹)", min_value=1000.0, step=100.0)
 
-            if current_price > moving_avg:
-                advice.append((stock["symbol"], "Consider buying, upward trend"))
-            else:
-                advice.append((stock["symbol"], "Consider selling, downward trend"))
+    # Generate investment advice
+    advice_df, diversification_df, explainability = investment_advice(portfolio, total_funds)
 
-    advice_df = pd.DataFrame(advice, columns=["Stock", "Advice"])
+    # Display investment advice
+    st.subheader("Investment Advice (Buy/Hold/Sell)")
     st.dataframe(advice_df)
+
+    # Display diversification options
+    st.subheader("Other Investment Opportunities")
+    if not diversification_df.empty:
+        st.dataframe(diversification_df)
+    else:
+        st.warning("No diversification options available.")
+
+    # Display explainability
+    st.subheader("Explainability")
+    for explanation in explainability:
+        st.write(f"- {explanation}")
 
 # --- Feature 7: Profit/Loss Analysis ---
 with tabs[6]:

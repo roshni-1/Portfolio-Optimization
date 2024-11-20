@@ -174,7 +174,7 @@ def fetch_market_movers(region="IN", lang="en-US", start=0, count=10):
 
 # --- Function to Fetch Sector Performance ---
 def fetch_sector_performance():
-    """Fetch sector performance in Indian market using yfinance."""
+    """Fetch sector performance in the Indian market using yfinance."""
     sectoral_indices = {
         "NIFTY IT": "^CNXIT",
         "NIFTY Pharma": "^CNXPHARMA",
@@ -215,89 +215,99 @@ def fetch_sector_performance():
     return df
 
 # --- Investment Advice Feature ---
-def investment_advice(portfolio, total_funds):
+def generate_portfolio_advice(portfolio, total_funds):
     """
-    Generate investment advice based on the user's portfolio, available funds, and market conditions.
-    
-    Parameters:
-    - portfolio: List of dictionaries containing stock symbols, quantities, invested amounts, and stop-loss percentages.
-    - total_funds: Total funds available for investment.
-    
-    Returns:
-    - advice_df: DataFrame containing buy/hold/sell advice and quantities.
-    - diversification_options: Suggestions for other investment opportunities.
-    - explainability: Detailed explanations for the advice.
+    Generate investment advice for the user's portfolio, including buy/hold/sell recommendations 
+    and diversification options based on sector performance.
     """
     advice_data = []
     diversification_options = []
-    explainability = []
+
+    # Fetch sector performance
+    sector_performance = fetch_sector_performance()
 
     for stock in portfolio:
-        # Fetch current stock data
+        # Fetch stock data
         data = fetch_stock_data(stock["symbol"], "6mo")
         if data.empty:
-            st.error(f"Unable to fetch data for {stock['symbol']}. Skipping.")
             continue
 
-        # Extract necessary data
         current_price = data["Close"].iloc[-1]
-        qty_owned = stock["qty"]
         invested_amount = stock["invested"]
+        qty = stock["qty"]
         stop_loss_price = current_price * (1 - stock["stop_loss_pct"] / 100)
 
-        # Determine buy/hold/sell action
-        action = ""
-        quantity = 0
-
-        if current_price < stop_loss_price:  # Stock is nearing stop-loss
+        # Generate Buy/Hold/Sell Advice
+        if current_price < stop_loss_price:
             action = "Sell"
-            quantity = qty_owned
-            explainability.append(
-                f"{stock['symbol']} is nearing its stop-loss price of ₹{stop_loss_price:.2f}. "
-                f"Consider selling all holdings."
-            )
-        elif current_price < invested_amount / qty_owned:  # Current price is below average purchase price
+            quantity = qty
+            reason = f"Price nearing stop-loss of ₹{stop_loss_price:.2f}."
+        elif current_price < invested_amount / qty:
             action = "Hold"
-            explainability.append(
-                f"{stock['symbol']} is trading below your average purchase price. "
-                f"Consider holding for recovery."
-            )
-        else:  # Potential buy opportunity
-            max_buy_qty = total_funds // current_price
+            quantity = 0
+            reason = "Price is below your average cost; consider holding."
+        else:
             action = "Buy"
-            quantity = int(max_buy_qty * 0.2)  # Invest 20% of available funds
-            explainability.append(
-                f"{stock['symbol']} is performing well, with potential for growth. "
-                f"Consider buying {quantity} shares."
-            )
+            quantity = int(0.2 * (total_funds // current_price))  # Example allocation
+            reason = "Stock showing growth potential; consider buying more."
 
         advice_data.append({
             "Stock": stock["symbol"],
             "Current Price (₹)": current_price,
             "Action": action,
             "Quantity": quantity,
+            "Reason": reason
         })
 
-    # Generate diversification options based on sector performance
-    sectors_df = fetch_sector_performance()
-    if not sectors_df.empty:
-        top_sectors = sectors_df.head(3)  # Top 3 performing sectors
+    # Generate Diversification Options
+    if not sector_performance.empty:
+        top_sectors = sector_performance.head(3)  # Top 3 performing sectors
         for _, row in top_sectors.iterrows():
             diversification_options.append({
                 "Sector": row["Sector"],
                 "Performance (%)": row["Performance (%)"],
                 "Suggested Investment (₹)": total_funds * 0.1  # Suggest 10% of funds for diversification
             })
-        explainability.append(
-            "Consider diversifying into top-performing sectors for balanced growth."
-        )
 
-    # Create DataFrames for advice and diversification options
-    advice_df = pd.DataFrame(advice_data)
-    diversification_df = pd.DataFrame(diversification_options)
+    return pd.DataFrame(advice_data), pd.DataFrame(diversification_options)
 
-    return advice_df, diversification_df, explainability
 
+def recommend_profitable_stocks(additional_funds):
+    """Recommend profitable stocks based on additional funds available for investment."""
+    nifty50_stocks = [
+        "RELIANCE.NS", "INFY.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "KOTAKBANK.NS",
+        "LT.NS", "SBIN.NS", "AXISBANK.NS", "BAJFINANCE.NS", "HDFC.NS", "ITC.NS",
+        "MARUTI.NS", "HINDUNILVR.NS", "ASIANPAINT.NS", "SUNPHARMA.NS", "TITAN.NS",
+        "ULTRACEMCO.NS", "WIPRO.NS", "POWERGRID.NS", "ONGC.NS", "NTPC.NS",
+        "TATASTEEL.NS", "COALINDIA.NS", "BPCL.NS", "BHARTIARTL.NS", "ADANIENT.NS"
+    ]
+    recommendations = []
+
+    for ticker in nifty50_stocks:
+        try:
+            hist = fetch_stock_data(ticker, period="6mo")
+            if hist.empty:
+                continue
+
+            current_price = hist['Close'].iloc[-1]
+            returns = hist['Close'].pct_change().dropna()
+            avg_daily_return = returns.mean()
+            cumulative_return = ((1 + returns).prod()) - 1
+
+            # Check if the stock fits the additional funds criteria
+            if cumulative_return > 0 and current_price <= additional_funds:
+                quantity = int(additional_funds // current_price)
+                recommendations.append({
+                    "Ticker": ticker,
+                    "Current Price (₹)": round(current_price, 2),
+                    "Cumulative Return (%)": round(cumulative_return * 100, 2),
+                    "Average Daily Return (%)": round(avg_daily_return * 100, 2),
+                    "Recommended Quantity": quantity
+                })
+        except Exception as e:
+            st.warning(f"Error fetching data for {ticker}: {e}")
+
+    return pd.DataFrame(recommendations)
 # --- Streamlit Layout ---
 st.set_page_config(page_title="Smart Portfolio Advisor", layout="wide")
 st.title("Smart Portfolio Advisor 📈")
@@ -645,89 +655,104 @@ with tabs[3]:
                 - Review other technical indicators for confirmation.
             """)
 
-# --- Feature 5: Trending Sectors & Stocks ---
+# --- Feature 5: Trending Stocks and Sectors ---
 with tabs[4]:
     st.header("5️⃣ Trending Stocks and Sectors")
 
     # --- Market Movers Section ---
     st.subheader("📊 Market Movers (Trending Stocks)")
 
-  # Fetch market movers
+    # Fetch market movers
     market_movers_df = fetch_market_movers()
 
-if not market_movers_df.empty:
-    # Group by category
-    for category in market_movers_df["Category"].unique():
-        st.subheader(category)  # Display category (e.g., Top Gainers, Top Losers)
-        category_data = market_movers_df[market_movers_df["Category"] == category]
+    if not market_movers_df.empty:
+        # Group by category
+        for category in market_movers_df["Category"].unique():
+            st.subheader(category)  # Display category (e.g., Top Gainers, Top Losers)
+            category_data = market_movers_df[market_movers_df["Category"] == category]
 
-        # Create cards for each stock
-        cols = st.columns(3)  # Display cards in a grid (3 per row)
-        for index, row in category_data.iterrows():
-            col = cols[index % 3]  # Distribute cards across columns
-            with col:
-                st.markdown(
-                    f"""
-                    <div style="border: 2px solid #ddd; border-radius: 10px; padding: 15px; margin-bottom: 15px; text-align: center; box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);">
-                        <h3 style="margin: 0; color: #333;">{row['Symbol']}</h3>
-                        <p style="font-size: 20px; color: #4caf50; font-weight: bold;">₹{row['Price (₹)']}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-else:
-    st.warning("No market movers data available. Try again later.")
+            # Create cards for each stock
+            cols = st.columns(3)  # Display cards in a grid (3 per row)
+            for index, row in category_data.iterrows():
+                col = cols[index % 3]  # Distribute cards across columns
+                with col:
+                    st.markdown(
+                        f"""
+                        <div style="border: 2px solid #ddd; border-radius: 10px; padding: 15px; margin-bottom: 15px; text-align: center; box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);">
+                            <h3 style="margin: 0; color: #333;">{row['Symbol']}</h3>
+                            <p style="font-size: 20px; color: #4caf50; font-weight: bold;">₹{row['Price (₹)']}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+    else:
+        st.warning("No market movers data available. Try again later.")
 
     # --- Trending Sectors Section ---
     st.subheader("📈 Trending Sectors")
-    sectors_df = fetch_sector_performance()
+    try:
+        # Fetch sector performance
+        sectors_df = fetch_sector_performance()
 
-    if not sectors_df.empty:
-        st.write("### Sector Performance (Last 5 Days)")
-        st.dataframe(sectors_df.style.format({"Performance (%)": "{:.2f}%", "Current Price": "₹{:.2f}"}))
+        if not sectors_df.empty:
+            st.write("### Sector Performance (Last 5 Days)")
+            st.dataframe(sectors_df.style.format({"Performance (%)": "{:.2f}%", "Current Price": "₹{:.2f}"}))
 
-        # Create Grouped Bar Chart
-        fig = px.bar(
-            sectors_df,
-            x="Sector",
-            y="Performance (%)",
-            color="Sector",
-            text="Performance (%)",
-            title="Sectoral Performance (Grouped Bar Chart)",
-            labels={"Performance (%)": "Change (%)", "Sector": "Sector Name"}
-        )
-        fig.update_traces(textposition="outside")
-        st.plotly_chart(fig)
-    else:
-        st.warning("No sector performance data available. Try again later.")
+            # Create Grouped Bar Chart
+            fig = px.bar(
+                sectors_df,
+                x="Sector",
+                y="Performance (%)",
+                color="Sector",
+                text="Performance (%)",
+                title="Sectoral Performance (Grouped Bar Chart)",
+                labels={"Performance (%)": "Change (%)", "Sector": "Sector Name"}
+            )
+            fig.update_traces(textposition="outside")
+            st.plotly_chart(fig)
+        else:
+            st.warning("No sector performance data available. Try again later.")
+    except Exception as e:
+        st.error(f"Error fetching sector performance: {e}")
 
 # --- Feature 6: Investment Advice ---
 with tabs[5]:
     st.header("6️⃣ Investment Advice")
 
-   # Fetch total funds available for investment
-    total_funds = st.sidebar.number_input("Total Funds Available (₹)", min_value=1000.0, step=100.0)
+    # Input: Total funds available for investment
+    total_funds = st.sidebar.number_input("Enter total funds available for investment (₹):", min_value=500.0, step=100.0)
 
-    # Generate investment advice
-    advice_df, diversification_df, explainability = investment_advice(portfolio, total_funds)
+    # Generate portfolio advice and diversification options
+    portfolio_advice, diversification_options = generate_portfolio_advice(portfolio, total_funds)
 
-    # Display investment advice
-    st.subheader("Investment Advice (Buy/Hold/Sell)")
-    st.dataframe(advice_df)
+    # Display portfolio-specific advice
+    st.subheader("Current Portfolio Advice (Buy/Hold/Sell)")
+    if not portfolio_advice.empty:
+        st.dataframe(portfolio_advice)
+    else:
+        st.warning("No advice available for your portfolio.")
 
     # Display diversification options
-    st.subheader("Other Investment Opportunities")
-    if not diversification_df.empty:
-        st.dataframe(diversification_df)
+    st.subheader("Diversification Opportunities")
+    if not diversification_options.empty:
+        st.dataframe(diversification_options)
     else:
         st.warning("No diversification options available.")
 
-    # Display explainability
-    st.subheader("Explainability")
-    for explanation in explainability:
-        st.write(f"- {explanation}")
+    # Show recommendations for investment
+    st.subheader("Investment Opportunities")
+    if total_funds > 0:
+        recommendations_df = recommend_profitable_stocks(total_funds)
+        if not recommendations_df.empty:
+            st.write("Recommended Stocks for Investment:")
+            st.dataframe(recommendations_df)
+        else:
+            st.warning("No stocks available for recommendation.")
+    else:
+        st.warning("Please enter a valid total amount to see recommendations.")
 
-# --- Feature 7: Profit/Loss Analysis ---
+
+# --- Updated Profit/Loss Analysis ---
 with tabs[6]:
     st.header("7️⃣ Profit/Loss Analysis")
 
@@ -738,126 +763,492 @@ with tabs[6]:
     for stock in portfolio:
         data = fetch_stock_data(stock["symbol"], "6mo")
         if not data.empty:
-            current_value = stock["qty"] * data["Close"].iloc[-1]
+            current_price = data["Close"].iloc[-1]
+            invested = stock["invested"]
+            qty = stock["qty"]
+            current_value = qty * current_price
+            profit_loss = current_value - invested
+
+            # Calculate additional metrics
+            percentage_change = (profit_loss / invested) * 100 if invested != 0 else 0
+            break_even_price = invested / qty if qty != 0 else 0
+            holding_period = 6  # Placeholder: replace with actual holding period
+            annualized_return = (
+                ((current_value / invested) ** (1 / (holding_period / 12))) - 1
+                if invested > 0
+                else 0
+            )
+
             total_current_value += current_value
             profit_loss_data.append({
                 "Stock": stock["symbol"],
-                "Invested (₹)": stock["invested"],
+                "Invested (₹)": invested,
+                "Current Price (₹)": current_price,
                 "Current Value (₹)": current_value,
-                "Profit/Loss (₹)": current_value - stock["invested"]
+                "Profit/Loss (₹)": profit_loss,
+                "Percentage Change (%)": round(percentage_change, 2),
+                "Break-Even Price (₹)": break_even_price,
+                "Annualized Return (%)": round(annualized_return * 100, 2)
             })
 
     profit_loss_df = pd.DataFrame(profit_loss_data)
     st.dataframe(profit_loss_df)
+
+    # Display Metrics
     st.metric("Total Invested (₹)", total_invested)
     st.metric("Total Current Value (₹)", total_current_value)
     st.metric("Overall Profit/Loss (₹)", total_current_value - total_invested)
+    st.metric("Portfolio ROI (%)", round(((total_current_value - total_invested) / total_invested) * 100, 2))
 
-# --- Feature 8: Tax Impact ---
+    # Pie Chart: Profit/Loss Distribution
+    st.subheader("Profit/Loss Distribution")
+    profit_loss_pie = profit_loss_df[["Stock", "Profit/Loss (₹)"]]
+    fig_pie = px.pie(
+        profit_loss_pie,
+        values="Profit/Loss (₹)",
+        names="Stock",
+        title="Profit/Loss Distribution Across Portfolio",
+        hole=0.4,
+    )
+    st.plotly_chart(fig_pie)
+
+    # Trend Line: Cumulative Portfolio Value Over Time
+    st.subheader("Cumulative Portfolio Value Over Time")
+    cumulative_values = []
+    for stock in portfolio:
+        data = fetch_stock_data(stock["symbol"], "6mo")
+        if not data.empty:
+            data["Cumulative Value"] = stock["qty"] * data["Close"]
+            cumulative_values.append(data[["Date", "Cumulative Value"]])
+
+    if cumulative_values:
+        cumulative_df = pd.concat(cumulative_values).groupby("Date").sum().reset_index()
+        fig_line = px.line(
+            cumulative_df,
+            x="Date",
+            y="Cumulative Value",
+            title="Portfolio Cumulative Value Over Time",
+            labels={"Cumulative Value": "Portfolio Value (₹)"},
+        )
+        st.plotly_chart(fig_line)
+
+# --- Tax Impact Analysis ---
 with tabs[7]:
-    st.header("8️⃣ Tax Impact")
+    st.header("8️⃣ Tax Impact Analysis (Detailed)")
 
     tax_data = []
+    total_stcg_tax = 0
+    total_ltcg_tax = 0
+    total_dividend_tax = 0
     total_tax = 0
 
     for stock in portfolio:
+        # Fetch stock data
         data = fetch_stock_data(stock["symbol"], "6mo")
         if not data.empty:
             current_price = data["Close"].iloc[-1]
             invested = stock["invested"]
             qty = stock["qty"]
             profit = (current_price * qty) - invested
-            holding_period = 6  # Mocked as 6 months; use actual dates for real calculation.
+            holding_period = 6  # Placeholder: replace with actual holding period logic
+            dividend_income = stock.get("dividend", 0)  # Assume user provides dividend income per stock
 
             if profit > 0:
                 if holding_period < 12:
-                    tax = profit * 0.15  # Short-Term Capital Gains Tax
+                    # Short-Term Capital Gains Tax
+                    stcg_tax = profit * 0.15
+                    total_stcg_tax += stcg_tax
+                    tax_data.append({
+                        "Stock": stock["symbol"],
+                        "Profit (₹)": profit,
+                        "Category": "Short-Term (STCG)",
+                        "Tax (₹)": stcg_tax,
+                        "Holding Period (Months)": holding_period
+                    })
                 else:
-                    taxable_gain = max(0, profit - 100000)  # Long-Term Capital Gains Exemption
-                    tax = taxable_gain * 0.10
-                total_tax += tax
+                    # Long-Term Capital Gains Tax
+                    taxable_gain = max(0, profit - 100000)  # Exemption limit for LTCG
+                    ltcg_tax = taxable_gain * 0.10
+                    total_ltcg_tax += ltcg_tax
+                    tax_data.append({
+                        "Stock": stock["symbol"],
+                        "Profit (₹)": profit,
+                        "Category": "Long-Term (LTCG)",
+                        "Tax (₹)": ltcg_tax,
+                        "Holding Period (Months)": holding_period
+                    })
 
-                tax_data.append({
-                    "Stock": stock["symbol"],
-                    "Profit (₹)": profit,
-                    "Tax Liability (₹)": tax,
-                    "Holding Period (Months)": holding_period
-                })
             else:
+                # Losses
                 tax_data.append({
                     "Stock": stock["symbol"],
                     "Profit (₹)": profit,
-                    "Tax Liability (₹)": 0,
+                    "Category": "Loss",
+                    "Tax (₹)": 0,
                     "Holding Period (Months)": holding_period
                 })
 
+            # Dividend Taxation
+            if dividend_income > 0:
+                dividend_tax = dividend_income * 0.30  # Assume 30% slab rate for simplicity
+                total_dividend_tax += dividend_tax
+                tax_data.append({
+                    "Stock": stock["symbol"],
+                    "Profit (₹)": 0,
+                    "Category": "Dividend",
+                    "Tax (₹)": dividend_tax,
+                    "Holding Period (Months)": "-",
+                })
+
+    # Calculate Total Tax
+    total_tax = total_stcg_tax + total_ltcg_tax + total_dividend_tax
+    total_tax_with_cess = total_tax * 1.04  # Adding 4% cess
+
+    # Display Tax Breakdown
     tax_df = pd.DataFrame(tax_data)
+    st.subheader("Detailed Tax Breakdown")
     st.dataframe(tax_df)
-    st.metric("Total Tax Liability (₹)", round(total_tax, 2))
 
-# --- Feature 9: Risk Management ---
+    # Display Metrics
+    st.metric("Total Short-Term Capital Gains Tax (₹)", round(total_stcg_tax, 2))
+    st.metric("Total Long-Term Capital Gains Tax (₹)", round(total_ltcg_tax, 2))
+    st.metric("Total Dividend Tax (₹)", round(total_dividend_tax, 2))
+    st.metric("Total Tax with Cess (₹)", round(total_tax_with_cess, 2))
+
+    # Visualize Tax Distribution
+    st.subheader("Tax Distribution")
+    tax_distribution = {
+        "Short-Term Gains Tax (₹)": total_stcg_tax,
+        "Long-Term Gains Tax (₹)": total_ltcg_tax,
+        "Dividend Tax (₹)": total_dividend_tax,
+    }
+    fig_pie_tax = px.pie(
+        values=tax_distribution.values(),
+        names=tax_distribution.keys(),
+        title="Tax Distribution by Category",
+        hole=0.4,
+    )
+    st.plotly_chart(fig_pie_tax)
+
+    # Insights and Recommendations
+    st.subheader("Insights and Recommendations")
+    st.write("""
+        - **Optimize Taxation**: Use losses to offset short-term or long-term gains where applicable.
+        - **LTCG Exemption**: Utilize the ₹1,00,000 exemption limit effectively.
+        - **Plan Dividend Income**: Keep track of dividends to manage overall tax liabilities.
+        - **Carry-Forward Losses**: If you have losses, ensure to declare them to carry forward for up to 8 years.
+        - **Consult a Tax Advisor**: For complex portfolios, seek professional advice to minimize tax liabilities.
+    """)
+
+# --- Risk Management Analysis ---
 with tabs[8]:
-    st.header("9️⃣ Risk Management (VaR)")
+    st.header("9️⃣ Risk Management (Detailed)")
 
+    # Portfolio Risk Metrics
     confidence_level = 0.95
+    risk_free_rate = RISK_FREE_RATE
     portfolio_var = 0
-    var_data = []
+    portfolio_cvar = 0
+    portfolio_beta = 0
+    portfolio_volatility = 0
+    individual_risks = []
+    stock_betas = []
+    returns_data = []
 
     for stock in portfolio:
+        # Fetch historical data
         data = fetch_stock_data(stock["symbol"], "6mo")
         if not data.empty:
             returns = data["Close"].pct_change().dropna()
+            returns_data.append(returns)
+
+            # Calculate VaR
             var = np.percentile(returns, (1 - confidence_level) * 100)
             invested = stock["invested"]
             stock_var = invested * var
             portfolio_var += stock_var
 
-            var_data.append({
+            # Calculate CVaR
+            cvar = returns[returns <= var].mean()
+            stock_cvar = invested * cvar
+            portfolio_cvar += stock_cvar
+
+            # Simulated Beta (Placeholder)
+            beta = 1.2  # Mock beta; integrate an API for actual beta values
+            stock_betas.append(beta)
+            portfolio_beta += beta * (invested / sum(stock["invested"] for stock in portfolio))
+
+            # Annualized Volatility
+            stock_volatility = returns.std() * np.sqrt(252)
+            portfolio_volatility += (invested / sum(stock["invested"] for stock in portfolio)) * stock_volatility
+
+            individual_risks.append({
                 "Stock": stock["symbol"],
-                "Invested (₹)": invested,
-                "VaR (₹)": round(stock_var, 2)
+                "VaR (₹)": round(stock_var, 2),
+                "CVaR (₹)": round(stock_cvar, 2),
+                "Beta": beta,
+                "Annualized Volatility (%)": round(stock_volatility * 100, 2),
             })
 
-    var_df = pd.DataFrame(var_data)
-    st.dataframe(var_df)
-    st.metric("Portfolio VaR (₹)", round(portfolio_var, 2))
+    # Aggregate Risk Metrics
+    risk_df = pd.DataFrame(individual_risks)
+    st.subheader("Individual Stock Risk Metrics")
+    st.dataframe(risk_df)
 
-# --- Feature 10: News Sentiment Analysis ---
+    # Portfolio-Level Metrics
+    sharpe_ratio = (
+        (total_current_value - total_invested) / total_invested - risk_free_rate
+    ) / portfolio_volatility if portfolio_volatility != 0 else 0
+
+    st.subheader("Portfolio-Level Risk Metrics")
+    st.metric("Portfolio VaR (₹)", round(portfolio_var, 2))
+    st.metric("Portfolio CVaR (₹)", round(portfolio_cvar, 2))
+    st.metric("Portfolio Beta", round(portfolio_beta, 2))
+    st.metric("Portfolio Volatility (%)", round(portfolio_volatility * 100, 2))
+    st.metric("Portfolio Sharpe Ratio", round(sharpe_ratio, 2))
+
+    # Correlation Matrix
+    st.subheader("Correlation Matrix")
+    if returns_data:
+        correlation_matrix = pd.concat(returns_data, axis=1).corr()
+        correlation_matrix.columns = [stock["symbol"] for stock in portfolio]
+        correlation_matrix.index = correlation_matrix.columns
+
+        fig_corr = px.imshow(
+            correlation_matrix,
+            text_auto=True,
+            title="Portfolio Correlation Matrix",
+            labels=dict(color="Correlation"),
+        )
+        st.plotly_chart(fig_corr)
+
+    # Stress Testing
+    st.subheader("Stress Testing: Market Downturn")
+    downturn_scenario = -0.2  # Simulate a 20% market drop
+    stress_impact = []
+    for stock in portfolio:
+        stress_loss = stock["invested"] * downturn_scenario
+        stress_impact.append({"Stock": stock["symbol"], "Stress Loss (₹)": round(stress_loss, 2)})
+
+    stress_df = pd.DataFrame(stress_impact)
+    st.dataframe(stress_df)
+
+    # Visualizations
+    st.subheader("Risk Visualization")
+
+    # Bar Chart for VaR
+    fig_var = px.bar(
+        risk_df,
+        x="Stock",
+        y="VaR (₹)",
+        title="Value at Risk (VaR) by Stock",
+        labels={"VaR (₹)": "Value at Risk (₹)", "Stock": "Stock Name"},
+    )
+    st.plotly_chart(fig_var)
+
+    # Portfolio Stress Line Chart
+    cumulative_stress_loss = stress_df["Stress Loss (₹)"].sum()
+    stress_fig = px.line(
+        x=["Current Portfolio Value", "After Stress Test"],
+        y=[total_current_value, total_current_value + cumulative_stress_loss],
+        title="Portfolio Value Under Stress Test",
+        labels={"x": "Scenario", "y": "Portfolio Value (₹)"},
+    )
+    st.plotly_chart(stress_fig)
+
+    # Insights and Recommendations
+    st.subheader("Insights and Recommendations")
+    st.write("""
+        - **Diversify**: Minimize correlated assets to reduce concentrated risks.
+        - **Monitor Beta**: A high portfolio beta indicates sensitivity to market movements.
+        - **Stress Test Regularly**: Prepare for market downturns by analyzing potential impacts.
+        - **Enhance Sharpe Ratio**: Aim for higher risk-adjusted returns by managing volatility.
+    """)
+
+# --- Enhanced News Sentiment Analysis ---
 with tabs[9]:
-    st.header("🔟 News Sentiment Analysis")
+    st.header("🔟 Enhanced News Sentiment Analysis")
+
+    # --- Enhanced News Sentiment Analysis ---
+with tabs[9]:
+    st.header("🔟 News Sentiment Analysis & Recent Market News")
+
+    # 1️⃣ User-Specific News Sentiments
+    st.subheader("News Sentiments Related to Your Portfolio")
     sentiment_data = []
+    sentiment_trends = []
 
     for stock in portfolio:
+        # Fetch news articles for the stock
         news_articles = fetch_google_news(stock["symbol"])
         sentiment_scores = []
 
         for article in news_articles:
-            analysis = TextBlob(article["title"])
-            sentiment_scores.append(analysis.sentiment.polarity)
+            # Perform sentiment analysis
+            text_blob_analysis = TextBlob(article["title"])
+            polarity = text_blob_analysis.sentiment.polarity
+            subjectivity = text_blob_analysis.sentiment.subjectivity
+
+            # Enhanced sentiment analysis using VADER
+            from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+            analyzer = SentimentIntensityAnalyzer()
+            vader_scores = analyzer.polarity_scores(article["title"])
+            compound_score = vader_scores['compound']
+
+            # Weighted Sentiment Score (average of TextBlob and VADER)
+            weighted_score = (polarity + compound_score) / 2
+            sentiment_scores.append(weighted_score)
+
+            sentiment_trends.append({
+                "Stock": stock["symbol"],
+                "Date": article["published"],
+                "Title": article["title"],
+                "Polarity": polarity,
+                "Subjectivity": subjectivity,
+                "Compound (VADER)": compound_score,
+                "Weighted Sentiment": weighted_score
+            })
 
         if sentiment_scores:
             avg_sentiment = np.mean(sentiment_scores)
-            sentiment = "Positive" if avg_sentiment > 0 else "Negative"
+            sentiment_label = (
+                "Strongly Positive" if avg_sentiment > 0.5 else
+                "Positive" if avg_sentiment > 0.1 else
+                "Neutral" if avg_sentiment >= -0.1 else
+                "Negative" if avg_sentiment >= -0.5 else
+                "Strongly Negative"
+            )
         else:
             avg_sentiment = 0
-            sentiment = "Neutral"
+            sentiment_label = "Neutral"
 
         sentiment_data.append({
             "Stock": stock["symbol"],
-            "Sentiment": sentiment,
-            "Average Score": round(avg_sentiment, 2),
-            "Articles": [article["title"] for article in news_articles]
+            "Average Sentiment Score": round(avg_sentiment, 2),
+            "Sentiment Label": sentiment_label,
+            "Recent Articles": [article["title"] for article in news_articles]
         })
 
+    # Display Portfolio Sentiments
     sentiment_df = pd.DataFrame(sentiment_data)
     st.dataframe(sentiment_df)
 
-# --- Feature 11: Final Tip Sheet ---
+    # Visualize Portfolio Sentiment Distribution
+    st.subheader("Portfolio Sentiment Distribution")
+    fig_sentiment_pie = px.pie(
+        sentiment_df,
+        values="Average Sentiment Score",
+        names="Stock",
+        title="Sentiment Distribution for Your Portfolio",
+        hole=0.4
+    )
+    st.plotly_chart(fig_sentiment_pie)
+
+    # Sentiment Trends Over Time
+    sentiment_trends_df = pd.DataFrame(sentiment_trends)
+    st.subheader("Sentiment Trends for Your Portfolio")
+    fig_sentiment_line = px.line(
+        sentiment_trends_df,
+        x="Date",
+        y="Weighted Sentiment",
+        color="Stock",
+        title="Sentiment Trends Over Time",
+        labels={"Weighted Sentiment": "Sentiment Score", "Date": "Publication Date"}
+    )
+    st.plotly_chart(fig_sentiment_line)
+
+    # 2️⃣ Recent General News
+    st.subheader("Recent News on Indian Stock Market")
+    def fetch_recent_market_news():
+        rss_url = "https://news.google.com/rss/search?q=Indian+Stock+Market&hl=en-IN&gl=IN&ceid=IN:en"
+        news_feed = feedparser.parse(rss_url)
+        articles = []
+        for entry in news_feed.entries[:10]:  # Fetch top 10 articles
+            articles.append({
+                "title": entry.title,
+                "link": entry.link,
+                "published": entry.published
+            })
+        return articles
+
+    recent_news = fetch_recent_market_news()
+
+    if recent_news:
+        for article in recent_news:
+            st.markdown(f"""
+                <div style="border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+                    <h4 style="margin: 0; color: #007bff;">{article['title']}</h4>
+                    <p style="margin: 5px 0; color: #555;">Published: {article['published']}</p>
+                    <a href="{article['link']}" target="_blank" style="color: #007bff; text-decoration: none;">Read Full Article</a>
+                </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.warning("No recent news available. Please try again later.")
+# --- Final Tip Sheet ---
 with tabs[10]:
     st.header("1️⃣1️⃣ Final Tip Sheet")
-    st.markdown("### Key Takeaways:")
-    st.write("1. Diversify your investments across sectors to manage risks.")
-    st.write("2. Monitor trending stocks and sectors for new opportunities.")
-    st.write("3. Use Monte Carlo simulations to assess potential outcomes.")
-    st.write("4. Review tax impacts to minimize liabilities.")
-    st.write("5. Apply insights from technical analysis and news sentiment.")
+
+    st.markdown("### Portfolio Summary")
+    st.write(f"**Total Invested (₹):** {total_invested}")
+    st.write(f"**Current Value (₹):** {total_current_value}")
+    st.write(f"**Overall Profit/Loss (₹):** {total_current_value - total_invested}")
+    st.write(f"**Portfolio ROI (%):** {round(((total_current_value - total_invested) / total_invested) * 100, 2)}")
+
+    st.markdown("### Investment Recommendations")
+    for index, row in portfolio_advice.iterrows():
+        st.write(f"**{row['Stock']}:** {row['Action']} {row['Quantity']} shares. {row['Reason']}")
+
+    st.markdown("### Risk Assessment")
+    st.write(f"**Portfolio VaR (₹):** {round(portfolio_var, 2)}")
+    st.write(f"**Portfolio CVaR (₹):** {round(portfolio_cvar, 2)}")
+    st.write(f"**Portfolio Beta:** {round(portfolio_beta, 2)}")
+    st.write(f"**Portfolio Sharpe Ratio:** {round(sharpe_ratio, 2)}")
+
+    st.markdown("### Sector Insights")
+    try:
+        # Fetch sector performance (reuse or fetch again)
+        if 'sectors_df' in locals() and not sectors_df.empty:
+            top_sectors = sectors_df.head(3)  # Top 3 performing sectors
+            st.write("Top Performing Sectors:")
+            st.dataframe(top_sectors)
+        else:
+            st.warning("No sector performance data available.")
+    except Exception as e:
+        st.error(f"Error fetching sector insights: {e}")
+
+    st.markdown("### News Sentiment Highlights")
+    for index, row in sentiment_df.iterrows():
+        st.write(f"**{row['Stock']}:** {row['Sentiment Label']} sentiment. "
+                 f"Top Articles: {', '.join(row['Recent Articles'][:3])}")
+
+    st.markdown("### Tax Impact")
+    st.write(f"**Short-Term Capital Gains Tax (₹):** {round(total_stcg_tax, 2)}")
+    st.write(f"**Long-Term Capital Gains Tax (₹):** {round(total_ltcg_tax, 2)}")
+    st.write(f"**Dividend Tax (₹):** {round(total_dividend_tax, 2)}")
+    st.write(f"**Total Tax Liability with Cess (₹):** {round(total_tax_with_cess, 2)}")
+    st.markdown("**Tax Tips:**")
+    st.write("- Use losses to offset gains where applicable.")
+    st.write("- Ensure to leverage the ₹1,00,000 LTCG exemption.")
+    st.write("- Declare losses to carry forward for up to 8 years.")
+
+    st.markdown("### Future Predictions")
+    st.write("Prophet-based predictions for key stocks in the portfolio:")
+    for stock in portfolio:
+        st.write(f"**{stock['symbol']}:**")
+        if "Next 5 Days Prediction" in locals():
+            st.table(next_5_days)  # Display next 5-day predictions
+
+    st.markdown("### Stress Test Results")
+    st.write(f"Total Portfolio Value after a 20% market downturn: ₹{total_current_value + cumulative_stress_loss:.2f}")
+
+    st.markdown("### General Tips")
+    st.write("- Monitor technical indicators and sentiment trends regularly.")
+    st.write("- Diversify investments across sectors to reduce risk.")
+    st.write("- Use Monte Carlo simulations and risk metrics for better planning.")
+    st.write("- Consult a tax advisor for efficient tax management.")
+
+    st.markdown("### Action Plan")
+    st.write("1. Adjust portfolio based on diversification recommendations.")
+    st.write("2. Execute buy/sell actions based on sentiment and technical indicators.")
+    st.write("3. Plan for tax implications and optimize tax liability.")
+    st.write("4. Continue monitoring market and sector performance weekly.")

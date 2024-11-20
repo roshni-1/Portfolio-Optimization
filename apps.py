@@ -174,7 +174,7 @@ def fetch_market_movers(region="IN", lang="en-US", start=0, count=10):
 
 # --- Function to Fetch Sector Performance ---
 def fetch_sector_performance():
-    """Fetch sector performance in the Indian market using yfinance."""
+    """Fetch sector performance in Indian market using yfinance."""
     sectoral_indices = {
         "NIFTY IT": "^CNXIT",
         "NIFTY Pharma": "^CNXPHARMA",

@@ -13,9 +13,10 @@
 - **Real-Time Stock Price Retrieval:** Fetches current prices to provide real-time market insights.
 - **Stock Price Forecasting:** Forecasts future prices using Prophet and gives investment advice based on price trends.
 
-![image](https://github.com/user-attachments/assets/33ed3539-1161-486b-8bd9-5c485b738f37)
-![image](https://github.com/user-attachments/assets/1a6e8072-0c83-47f5-b707-7aaf603fc9bb)
-![image](https://github.com/user-attachments/assets/a5622512-0202-4368-aad9-c41a9532b7dd)
+![image](https://github.com/user-attachments/assets/fae8dcf1-9efd-4210-8b26-dc77e18d6245)
+![image](https://github.com/user-attachments/assets/e84e773e-85f4-4dcc-b0ae-4f4e33dc8c48)
+![image](https://github.com/user-attachments/assets/5dfa69fe-c73a-4a76-90a7-e42fb73d40b9)
+![image](https://github.com/user-attachments/assets/bff33afd-d6ac-4dc6-b5dd-f9ed25f95e88)
 
 Data Retrieval: Fetches historical stock data using yfinance.
 Performance Analysis: Calculates profit/loss, stop-loss thresholds, sector allocation, and compares portfolio performance with an index.

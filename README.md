@@ -177,8 +177,15 @@ For any inquiries or feedback, please reach out to:
 - **Developer**: [Roshni Yadav](roshni16yadav@gmail.com)
 - **GitHub**: [Your GitHub Profile](https://github.com/roshni-1)
 
+**Mind-Map** 
+ Shows the summary of entire application architecture, organizing the various features and functions.
+![image](https://github.com/user-attachments/assets/fef214c9-825d-4e2d-b4e9-4abcff3f85ea)
 
-![image](https://github.com/user-attachments/assets/2c4ac456-3897-41ad-bbec-58278f5e719c)
+**Flow Chart**
+Shows the complete workflow of the application.
+![image](https://github.com/user-attachments/assets/8fbf59f6-9b60-463b-9905-a60f184af2f5)
 
-
+**Sequence Diagram**
+ Sequence Diagram illustrating the interactions between the components in the application
+ ![image](https://github.com/user-attachments/assets/4e11ffd1-7705-4638-8b55-7ecf4959abb2)
 

@@ -18,6 +18,7 @@
 ![image](https://github.com/user-attachments/assets/5dfa69fe-c73a-4a76-90a7-e42fb73d40b9)
 ![image](https://github.com/user-attachments/assets/bff33afd-d6ac-4dc6-b5dd-f9ed25f95e88)
 
+
 Data Retrieval: Fetches historical stock data using yfinance.
 Performance Analysis: Calculates profit/loss, stop-loss thresholds, sector allocation, and compares portfolio performance with an index.
 Risk Analysis: Analyzes news sentiment and performs Monte Carlo simulation for price prediction.

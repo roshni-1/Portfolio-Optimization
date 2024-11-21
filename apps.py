@@ -177,7 +177,7 @@ def fetch_market_movers(region="IN", lang="en-US", start=0, count=10):
     """Fetch market movers (top gainers, losers, active stocks) using Yahoo Finance API."""
     conn = http.client.HTTPSConnection("apidojo-yahoo-finance-v1.p.rapidapi.com")
     headers = {
-        'x-rapidapi-key': "5d63bb22bemshb6e582f5cdfd2cdp1d4344jsn14c1f5b16633",
+        'x-rapidapi-key': "ypur-api key",
         'x-rapidapi-host': "apidojo-yahoo-finance-v1.p.rapidapi.com"
     }
 

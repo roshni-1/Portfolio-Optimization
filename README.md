@@ -176,12 +176,9 @@ For any inquiries or feedback, please reach out to:
 
 - **Developer**: [Roshni Yadav](roshni16yadav@gmail.com)
 - **GitHub**: [Your GitHub Profile](https://github.com/roshni-1)
-```
 
 
-![image](https://github.com/user-attachments/assets/fae8dcf1-9efd-4210-8b26-dc77e18d6245)
-![image](https://github.com/user-attachments/assets/e84e773e-85f4-4dcc-b0ae-4f4e33dc8c48)
-![image](https://github.com/user-attachments/assets/5dfa69fe-c73a-4a76-90a7-e42fb73d40b9)
-![image](https://github.com/user-attachments/assets/bff33afd-d6ac-4dc6-b5dd-f9ed25f95e88)
+![image](https://github.com/user-attachments/assets/2c4ac456-3897-41ad-bbec-58278f5e719c)
+
 
 

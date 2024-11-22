@@ -184,14 +184,13 @@ For any inquiries or feedback, please reach out to:
 Shows the complete workflow of the application.
 ![image](https://github.com/user-attachments/assets/8fbf59f6-9b60-463b-9905-a60f184af2f5)
 
-**Application Images**
-
-![image](https://github.com/user-attachments/assets/3481ce99-7e1a-411a-bd0d-c74b2a0daeb2)
-![image](https://github.com/user-attachments/assets/4b0e8cef-5a2e-4443-a71d-7959697818ff)
-
-
-
 **Sequence Diagram**
  Sequence Diagram illustrating the interactions between the components in the application
  ![image](https://github.com/user-attachments/assets/4e11ffd1-7705-4638-8b55-7ecf4959abb2)
+
+ **Application Images**
+
+![image](https://github.com/user-attachments/assets/3481ce99-7e1a-411a-bd0d-c74b2a0daeb2)
+
+
 

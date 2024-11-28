@@ -6,7 +6,7 @@
 
 ## Overview
 
-**Portfolio Wizard** is a feature-rich application built using Streamlit to assist investors in managing and optimizing their stock portfolios. The application integrates real-time market data, financial modeling, and advanced visualizations to deliver actionable insights. This project is ideal for individual investors seeking to maximize their portfolio returns while minimizing risks.
+**Portfolio Wizard** is a feature-rich application built using Streamlit to assist investors in managing and optimizing their stock portfolios. The application integrates real-time market data, financial modeling, and advanced visualizations to deliver actionable insights. This project is ideal for individual investors seeking to maximize their portfolio returns while minimizing risks. .
 
 ---
 
